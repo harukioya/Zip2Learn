@@ -7,40 +7,10 @@
 // 表示する文字はすべて textContent で入れる。ファイル名はZIPの中から来るため、
 // 細工されている前提で扱う。
 
-import { visible } from './evidence.js';
+import { hasBidi, visible } from './evidence.js';
+import { el, homeNav } from './dom.js';
+import { api, authHeaders } from './http.js';
 import { decidedBy, profileLine, profileName } from './profile.js';
-
-// 表示順を入れ替える制御文字は `payroll<RLO>gnp.exe` を `payrollexe.png` に
-// 見せる。CSS の分離だけでは名前の内側までは戻せないので、目に見える形に
-// 置き換えてから表示する。
-const BIDI = /[‪-‮⁦-⁩‎‏]/g;
-const showBidi = (s) =>
-  String(s).replace(BIDI, (c) => `<U+${c.codePointAt(0).toString(16).toUpperCase()}>`);
-const hasBidi = (s) => BIDI.test(String(s));
-
-const el = (tag, className, text) => {
-  const node = document.createElement(tag);
-  if (className) node.className = className;
-  if (text != null) node.textContent = text;
-  return node;
-};
-
-function token() {
-  const meta = document.querySelector('meta[name="zip2learn-token"]');
-  return meta ? meta.content : '';
-}
-
-async function api(path, options) {
-  const res = await fetch(path, {
-    ...options,
-    headers: { 'Content-Type': 'application/json', 'X-Zip2Learn-Token': token() },
-  });
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(body.error || `通信に失敗しました（${res.status}）`);
-  }
-  return res.json();
-}
 
 // ---------------------------------------------------------------------------
 // 判定の見せ方
@@ -122,19 +92,6 @@ const bucketOf = (m) => {
 // ---------------------------------------------------------------------------
 // 一覧の画面
 // ---------------------------------------------------------------------------
-
-/** ホームへ戻る導線。どの画面からでも抜けられるように、必ず一つは置く。 */
-function homeNav() {
-  const nav = el('div', 'navbtns navbtns--home');
-  const home = el('button', 'btn btn-ghost', '← ホームに戻る');
-  home.type = 'button';
-  home.setAttribute('aria-label', 'ホームに戻る');
-  home.addEventListener('click', () => {
-    location.hash = '#/';
-  });
-  nav.append(home);
-  return nav;
-}
 
 /**
  * @param {HTMLElement} mount
@@ -1200,7 +1157,7 @@ function gzfAction(m, archiveId) {
   const box = el('div', 'navbtns navbtns--wrap');
   const go = el('button', 'btn btn-primary btn-sm', 'この GZF から演習を作る');
   go.type = 'button';
-  go.setAttribute('aria-label', `${showBidi(m.name)} から Ghidra の静的解析演習を作る`);
+  go.setAttribute('aria-label', `${visible(m.name)} から Ghidra の静的解析演習を作る`);
   const pw = el('input', 'text-input');
   pw.type = 'password';
   pw.autocomplete = 'off';
@@ -1219,7 +1176,7 @@ function gzfAction(m, archiveId) {
     try {
       res = await fetch('/api/ghidra/jobs/from-archive', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Zip2Learn-Token': token() },
+        headers: authHeaders(),
         body: JSON.stringify(body),
       });
       data = await res.json().catch(() => ({}));
@@ -1250,7 +1207,7 @@ function memberRow(m, archiveId, canGhidra = false) {
   bar.append(verdictBadge(m.verdict));
 
   const nameEl = el('div', 'member__name mono');
-  nameEl.textContent = showBidi(m.name);
+  nameEl.textContent = visible(m.name);
   bar.append(nameEl);
   bar.append(el('span', 'member__size mono', `${m.size} B`));
   row.append(bar);
@@ -1271,7 +1228,7 @@ function memberRow(m, archiveId, canGhidra = false) {
     m.warnings
       .split('\n')
       .filter(Boolean)
-      .forEach((w) => row.append(el('div', 'member__warn', `⚠ ${showBidi(w)}`)));
+      .forEach((w) => row.append(el('div', 'member__warn', `⚠ ${visible(w)}`)));
   }
 
   const toggle = el('button', 'btn btn-ghost btn-sm', '先頭のデータを見る');

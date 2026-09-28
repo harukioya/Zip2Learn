@@ -5,6 +5,8 @@
 // 制御文字はサーバー側で <U+XXXX> に置き換え済みだが、ここでも念のため同じ
 // 処理をかける。表示側だけ、保存側だけ、のどちらか一方に頼らない。
 
+import { el } from './dom.js';
+
 // サーバー側 `evidence._UNSAFE` と同じ範囲。改行とタブも含める。ZIP の
 // メンバー名には改行を入れられるので、残すと出典表示や読み上げラベルを
 // 複数行に割られてしまう。
@@ -19,17 +21,15 @@ export const visible = (s) =>
     (c) => `<U+${c.codePointAt(0).toString(16).toUpperCase().padStart(4, '0')}>`
   );
 
+/** 表示順を入れ替える文字（双方向制御文字）を含むか。
+ *  g フラグを付けない。付けると test() が lastIndex を持ち越し、呼ぶたびに結果が変わる。 */
+const BIDI = /[\u202a-\u202e\u2066-\u2069\u200e\u200f\u061c]/;
+export const hasBidi = (s) => BIDI.test(String(s == null ? '' : s));
+
 /** 画面へ載せる 1 件あたりの上限。長い行で頁が壊れないようにする。
  *  サーバー側の上限（1000）と揃える。ここで先に切ると、設問の答えにあたる
  *  項目だけが画面から消えることがある。 */
 const MAX_EXCERPT = 1000;
-
-const el = (tag, className, text) => {
-  const node = document.createElement(tag);
-  if (className) node.className = className;
-  if (text != null) node.textContent = text;
-  return node;
-};
 
 const KIND_LABEL = {
   process: 'プロセス',

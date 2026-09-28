@@ -8,14 +8,9 @@
 // ません」と書く。埋めてしまうと、根拠のない情報が教材の一部に見える。
 
 import { visible } from './evidence.js';
+import { el } from './dom.js';
+import { authHeaders } from './http.js';
 import { profileLine, profileOfLesson } from './profile.js';
-
-const el = (tag, className, text) => {
-  const node = document.createElement(tag);
-  if (className) node.className = className;
-  if (text != null) node.textContent = text;
-  return node;
-};
 
 /** 外部を開かずに読める用語集。初めての人が、画面の中だけで用語の意味を確かめられるようにする。 */
 const GLOSSARY = [
@@ -202,11 +197,6 @@ export function staticGlossary() {
   return glossary(STATIC_GLOSSARY);
 }
 
-function token() {
-  const meta = document.querySelector('meta[name="zip2learn-token"]');
-  return meta ? meta.content : '';
-}
-
 /**
  * 静的解析の教材の導入画面。
  *
@@ -335,7 +325,7 @@ function renderStaticIntroduction(mount, lesson, onStart) {
     try {
       const res = await fetch(`/api/lessons/${encodeURIComponent(lesson.id)}/delete`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Zip2Learn-Token': token() },
+        headers: authHeaders(),
         body: '{}',
       });
       ok = res.ok;

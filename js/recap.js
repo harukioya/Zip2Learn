@@ -17,13 +17,7 @@ import {
 } from './evidence.js';
 import { glossary, staticGlossary } from './intro.js';
 import { profileLine, profileOfLesson } from './profile.js';
-
-const el = (tag, className, text) => {
-  const node = document.createElement(tag);
-  if (className) node.className = className;
-  if (text != null) node.textContent = text;
-  return node;
-};
+import { el } from './dom.js';
 
 const STATUS_LABEL = {
   observed: '観測された事実',

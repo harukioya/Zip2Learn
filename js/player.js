@@ -8,6 +8,7 @@ import { renderQuiz } from './quiz.js';
 import { renderRecap } from './recap.js';
 import { clearCited, evidenceCard, evidenceMap, isStatic, sourceLabel, visible } from './evidence.js';
 import { renderIntroduction } from './intro.js';
+import { el } from './dom.js';
 
 // 事象の種別（データ側のキー）を、画面表示用の日本語に対応させる。
 // データの値そのものは変更しない。
@@ -24,13 +25,6 @@ const EVENT_TYPE = {
   call: '呼び出し命令',
   function: '関数',
   external: '外部関数',
-};
-
-const el = (tag, className, text) => {
-  const node = document.createElement(tag);
-  if (className) node.className = className;
-  if (text != null) node.textContent = text;
-  return node;
 };
 
 export async function renderLesson(mount, lessonId) {

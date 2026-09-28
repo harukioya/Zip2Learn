@@ -11,36 +11,8 @@
 // visible() で描く。
 
 import { visible } from './evidence.js';
-
-const el = (tag, className, text) => {
-  const node = document.createElement(tag);
-  if (className) node.className = className;
-  if (text != null) node.textContent = text;
-  return node;
-};
-
-function token() {
-  const meta = document.querySelector('meta[name="zip2learn-token"]');
-  return meta ? meta.content : '';
-}
-
-/** 応答を JSON で読む。失敗しても {error, code} の形に揃えて返す。 */
-async function call(path, options = {}) {
-  let res;
-  try {
-    res = await fetch(path, {
-      ...options,
-      headers: { 'Content-Type': 'application/json', 'X-Zip2Learn-Token': token(), ...(options.headers || {}) },
-    });
-  } catch (err) {
-    if (err && err.name === 'AbortError') {
-      return { ok: false, status: 0, aborted: true, body: { error: '送信を取り消しました。' } };
-    }
-    return { ok: false, status: 0, body: { error: 'サーバーに接続できません。python3 backend/api.py で起動しているか確かめてください。' } };
-  }
-  const body = await res.json().catch(() => ({}));
-  return { ok: res.ok, status: res.status, body };
-}
+import { el, homeNav } from './dom.js';
+import { call } from './http.js';
 
 const DOCKER_TEXT = {
   ready: 'この PC の Docker に接続できました。',
@@ -61,17 +33,6 @@ const PHASE_LABEL = {
   building: '教材生成中',
   done: '完了',
 };
-
-function homeNav() {
-  const nav = el('div', 'navbtns navbtns--home');
-  const home = el('button', 'btn btn-ghost', '← ホームに戻る');
-  home.type = 'button';
-  home.addEventListener('click', () => {
-    location.hash = '#/';
-  });
-  nav.append(home);
-  return nav;
-}
 
 const mb = (n) => `${Math.round(n / 1024 / 1024)} MB`;
 
