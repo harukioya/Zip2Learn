@@ -34,6 +34,7 @@ const CATEGORY_LABEL = {
   'static-string': '命令が参照する文字列を読む',
   'static-call': '直接呼び出しの行き先を読む',
   'static-external': '外部関数を見分ける',
+  'static-limits': '記録から言えないことを分ける',
 };
 
 // このレポート画面の id 空間。演習の段階とは別に持つ。レポートは mount を

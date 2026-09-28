@@ -244,6 +244,15 @@ await test('導入画面が出て、そこから調査を始められる', async
   assert.ok(view.cls('option').length > 0, '調査が始まる');
 });
 
+await test('導入の設問数は、段階に載った設問（得点の母数）から数える', async () => {
+  const obj = lesson();
+  const total = obj.stages.reduce(
+    (n, s) => n + (Array.isArray(s.quizzes) && s.quizzes.length ? s.quizzes.length : (s.quiz ? 1 : 0)), 0);
+  assert.ok(total > 0);
+  const view = await open(obj);
+  assert.ok(view.textContent.includes(`設問の数${total} 問`), view.textContent);
+});
+
 await test('導入と最終レポートに、同じデータセット形式の 1 行が出る', async () => {
   const obj = lesson();
   obj.introduction.dataset.forced = true;

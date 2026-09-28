@@ -445,6 +445,7 @@ class JobManager:
             "title": lesson["title"],
             "questions": sum(len(s["quizzes"]) for s in lesson["stages"]),
             "questionCounts": lesson["static"]["questionCounts"],
+            "templateCounts": lesson["static"]["templateCounts"],
             "skipped": lesson["static"]["skipped"],
             "truncated": lesson["static"]["truncated"],
             "sample": bool(lesson["static"].get("sample")),

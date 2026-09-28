@@ -19,6 +19,7 @@ const CATEGORY_HINTS = {
   'static-string': '命令の参照先アドレスと、定義済み文字列の記録のアドレスを照らし合わせてください。',
   'static-call': '呼び出し命令の行き先アドレスと、関数の入口アドレスを照らし合わせてください。',
   'static-external': '各記録のアドレス空間と登録先を確かめ、プログラムの外にある関数を探してください。',
+  'static-limits': '選択肢ごとに、下の記録のどの欄で確かめられるかを考えてください。確かめられる欄が無いものを選びます。',
 };
 
 /** Ghidra の保存済み解析情報から作った設問か。ボタンの言い方を変える。 */
@@ -74,7 +75,21 @@ function optionText(option) {
  * 根拠を選ばせる設問（evidence_pick）は、項目が付いていても空を返す。
  * そこで根拠を先に見せたら、答えを押す前に答えを見せることになる。
  */
-const PRESENTS_RECORD = new Set(['attck', 'limits', 'correlation']);
+const PRESENTS_RECORD = new Set(['attck', 'limits', 'correlation', 'static-limits']);
+
+/**
+ * 解答前に対象の記録へ飛ぶボタンの文言。
+ *
+ * 対象は設問によって、ログの行・命令・文字列・関数と違う。教材が
+ * `subjectLabel` で対象に合った言い方を持っていればそれを使う。持たない
+ * 旧教材は、従来どおり種類から決める。
+ */
+function subjectButtonText(quiz) {
+  if (typeof quiz.subjectLabel === 'string' && quiz.subjectLabel.trim()) {
+    return visible(quiz.subjectLabel);
+  }
+  return isStaticQuiz(quiz) ? '問題の命令を見る' : '問題の行を見る';
+}
 
 function subjectIds(quiz) {
   if (quiz.type === 'evidence_pick') return [];
@@ -142,7 +157,7 @@ export function renderQuiz(container, quiz, onAnswered, evidence) {
   const ids = subjectIds(quiz);
   const subject = subjectShown
     ? citedEvidence(ids, map, undefined, '対象の記録')
-    : jumpButtons(ids, map, 'stage', isStaticQuiz(quiz) ? '問題の命令を見る' : '問題の行を見る');
+    : jumpButtons(ids, map, 'stage', subjectButtonText(quiz));
   if (subject) {
     subject.classList.add('quiz__subject');
     quizEl.appendChild(subject);

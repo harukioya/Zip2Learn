@@ -599,6 +599,111 @@ await test('キャンセルと、画面を離れた後の応答', async () => {
 });
 
 // ---------------------------------------------------------------------------
+// 追加したテンプレート（文字列の参照元・直接呼び出し元・判断の限界）
+// ---------------------------------------------------------------------------
+
+// 上の Ghidra 画面のテストが fetch を差し替えているので、教材の読み込みに戻す。
+globalThis.fetch = async (url) => {
+  if (String(url).startsWith('/api/lessons/') && lessonForFetch) {
+    return { ok: true, status: 200, json: async () => lessonForFetch };
+  }
+  return { ok: false, status: 404, json: async () => ({}) };
+};
+
+/** 設問を 1 つだけ、その段階の記録と一緒に描く。飛び先のカードも同じ画面に置く。 */
+function renderAlone(l, q) {
+  const view = document.createElement('div');
+  app.replaceChildren(view);
+  const stage = l.stages.find((s) => s.quizzes.includes(q));
+  const box = document.createElement('div');
+  stage.events.flatMap((e) => e.evidenceIds).forEach((i) => box.append(evidenceCard(l.evidence[i])));
+  view.append(box);
+  const holder = document.createElement('div');
+  view.append(holder);
+  renderQuiz(holder, q, () => {}, l.evidence);
+  return { view, holder };
+}
+
+await test('対象に応じたボタンの文言（文字列・関数）で、段階内の 1 枚へ飛ぶ', async () => {
+  const l = lessonCopy();
+  for (const [template, label] of [['static.string-referrer', '問題の文字列を見る'],
+                                   ['static.caller', '問題の関数を見る']]) {
+    const q = quizzesOf(l).find((x) => x.templateId === template);
+    assert.ok(q, `fixture has ${template}`);
+    const { view, holder } = renderAlone(l, q);
+    const jump = holder.buttons(new RegExp(label));
+    assert.equal(jump.length, 1, template);
+    assert.equal(holder.buttons(/問題の命令を見る/).length, 0, 'not the generic wording');
+    assert.ok(!jump[0].textContent.includes(q.options[q.correct]), 'the button does not reveal the answer');
+    await jump[0].click();
+    assert.equal(globalThis.__focused.id, `ev-stage-${q.subjectEvidenceIds[0]}`);
+    const ids = allIds(view);
+    assert.equal(new Set(ids).size, ids.length);
+  }
+});
+
+await test('判断の限界の設問は、対象の記録を解答前に示し、命令へ飛ぶボタンを出さない', async () => {
+  const l = lessonCopy();
+  const q = quizzesOf(l).find((x) => x.category === 'static-limits');
+  assert.ok(q, 'fixture has a static-limits question');
+  const { holder } = renderAlone(l, q);
+  assert.equal(holder.buttons(/問題の命令を見る|問題の行を見る/).length, 0);
+  const subject = holder.cls('quiz__subject')[0];
+  assert.ok(subject, 'the record is presented before answering');
+  assert.match(subject.textContent, /対象の記録/);
+  assert.ok(!subject.textContent.includes(q.options[q.correct]), 'the card does not contain the answer');
+  assert.match(holder.cls('quiz__hint-body')[0].textContent, /ヒント 1\//);
+  assert.doesNotMatch(q.hints.join(''), /実行して|動かして|起動して/);
+});
+
+await test('旧教材（templateId・subjectLabel を持たない）も従来の文言で描ける', async () => {
+  const l = lessonCopy();
+  const q = quizzesOf(l).find((x) => x.templateId === 'static.string-referrer');
+  delete q.templateId;
+  delete q.subjectLabel;
+  const { holder } = renderAlone(l, q);
+  assert.equal(holder.buttons(/問題の命令を見る/).length, 1);
+  await holder.cls('option')[q.correct].click();
+  assert.match(holder.textContent, /正解です/);
+});
+
+await test('対象を解答前に示さない設問（subjectEvidenceIds が空）はボタンを出さない', async () => {
+  const l = lessonCopy();
+  const q = quizzesOf(l).find((x) => x.category === 'static-external');
+  q.subjectEvidenceIds = [];
+  const { holder } = renderAlone(l, q);
+  assert.equal(holder.buttons(/問題の/).length, 0);
+});
+
+await test('導入の設問数は実際に出す設問から数え、得点の母数と一致する', async () => {
+  const l = lessonCopy();
+  const total = quizzesOf(l).length;
+  const view = await openLesson(l);
+  assert.match(view.textContent, new RegExp(`全 ${total} 問`));
+  assert.match(view.textContent, /記録から言えないこと 1/);
+  assert.equal(total, l.selection.selected);
+});
+
+await test('振り返りに、新しいカテゴリの日本語名が出る', async () => {
+  const l = lessonCopy();
+  const view = await openLesson(l);
+  await view.buttons(/演習を始める/)[0].click();
+  for (let s = 0; s < l.stages.length; s++) {
+    for (let i = 0; i < l.stages[s].quizzes.length; i++) {
+      const q = l.stages[s].quizzes[i];
+      await view.cls('option')[q.correct].click();
+      const nextQ = view.buttons(/次の設問へ/);
+      if (nextQ.length) await nextQ[0].click();
+    }
+    await view.buttons(/^(次へ|振り返りへ)$/)[0].click();
+  }
+  const text = app.textContent;
+  assert.match(text, new RegExp(`正解 ${quizzesOf(l).length} / ${quizzesOf(l).length}`));
+  assert.match(text, /記録から言えないことを分ける/);
+  assert.doesNotMatch(text, /static-limits/);
+});
+
+// ---------------------------------------------------------------------------
 let failed = 0;
 for (const [status, name, err] of results) {
   console.log(`${status} ${name}`);

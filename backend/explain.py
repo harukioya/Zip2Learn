@@ -25,12 +25,15 @@ HONESTY RULE. ATT&CK の対応は、保存した 1 行の抜粋から疑いな�
 from __future__ import annotations
 
 import ipaddress
+import math
 from bisect import bisect_left, bisect_right
 from collections import Counter
 from typing import Callable, Mapping
 
 import attck
+import evidence
 import parsers
+import quiz_select
 import timeline
 from evidence import EvidenceStore, pick_index
 from parsers import FactReading, FactText, NormalizedEvent, ParsedSources, Parser
@@ -48,6 +51,59 @@ CATEGORY_LABEL = {
     "attck": "観測を手法に対応させる",
     "limits": "断定できない理由を説明する",
 }
+
+#: 設問テンプレート。識別子 → (利用者に見せる呼び名, カテゴリ)。
+#:
+#: 識別子は設問 ID（`q-endpoint-01` など）とは別物で、「どの種類の設問か」を
+#: 表す。カテゴリ（学習の観点）とも別で、一つのカテゴリに複数の種類が入る。
+TEMPLATES: dict[str, tuple[str, str]] = {
+    "log.process.program": ("起動したプログラムを読む", "log-reading"),
+    "log.process.host": ("起動を記録した端末を読む", "log-reading"),
+    "log.process.command-line": ("起動時のコマンドラインを読む", "log-reading"),
+    "log.process.evidence": ("起動の根拠となる行を選ぶ", "evidence"),
+    "log.file.path": ("操作されたファイルを読む", "log-reading"),
+    "log.file.host": ("ファイル操作を記録した端末を読む", "log-reading"),
+    "log.file.evidence": ("ファイル操作の根拠となる行を選ぶ", "evidence"),
+    "log.network.client": ("通信の要求元を読む", "log-reading"),
+    "log.network.target": ("通信の宛先を読む", "log-reading"),
+    "log.network.evidence": ("通信の根拠となる行を選ぶ", "evidence"),
+    "log.correlation.order": ("二つの記録の前後を読む", "correlation"),
+    "log.correlation.gap": ("二つの記録の時間差を求める", "correlation"),
+    "log.attck.technique": ("記録を手法に対応させる", "attck"),
+    "log.limits.network": ("1 行から言えることを分ける", "limits"),
+}
+
+#: 出題数の上限を超える候補があるときの優先順（`quiz_select.select` を参照）。
+#: カテゴリの偏りを避ける規則のほうが先に効くので、これは同じ条件どうしの
+#: 順位を決めるだけ。読む対象・考える操作が違うものを前に置く。
+TEMPLATE_PRIORITY = [
+    "log.process.program",
+    "log.file.evidence",
+    "log.correlation.order",
+    "log.attck.technique",
+    "log.limits.network",
+    "log.network.target",
+    "log.process.command-line",
+    "log.correlation.gap",
+    "log.file.path",
+    "log.network.client",
+    "log.process.evidence",
+    "log.network.evidence",
+    "log.process.host",
+    "log.file.host",
+]
+
+#: 同じ記録について、値を読む設問と、その値を主張として根拠の行を選ばせる
+#: 設問。両方を出すと、一方がもう一方の答えを示してしまう。
+REVERSE_TEMPLATES = frozenset({
+    frozenset({"log.process.program", "log.process.evidence"}),
+    frozenset({"log.file.path", "log.file.evidence"}),
+    frozenset({"log.network.client", "log.network.evidence"}),
+})
+
+#: コマンドラインを選択肢に出すときの最大長。これを超えると、選択肢の
+#: 表示で折り返しや省略が起き、互いを見分けにくくなる。
+MAX_COMMAND_OPTION = 160
 
 #: 1 段階に載せる事象の数。
 STAGE_EVENTS = 8
@@ -321,7 +377,9 @@ def _evidence_pick(store: EvidenceStore, correct_event: dict,
                    pool: list[dict], qid: str, objective: str,
                    claim: str, prompt_for: "Callable[[str], str]",
                    explain: str, nxt: str,
-                   proves: "Callable[[str], str]" = lambda ex: "") -> dict | None:
+                   proves: "Callable[[str], str] | None" = None,
+                   claim_of: "Callable[[dict], str] | None" = None,
+                   hint: str = "") -> dict | None:
     """根拠を選ばせる設問。作れないときは None を返す。
 
     誤答の選択肢も実在する証拠から取る。もっともらしい偽の出典を作ると、
@@ -335,6 +393,12 @@ def _evidence_pick(store: EvidenceStore, correct_event: dict,
     の項目にも同じ語は現れるので、起動対象を示す項目が抜粋の外にあっても
     検査を通ってしまう。見るべき項目を名指しする（読み方はパーサーが知って
     いる）。
+
+    `claim_of` は、一覧の事象 1 件が裏付ける主張を、その事象を作ったパーサー
+    で読み直して返す関数。渡されたときは、正解の行がその主張を裏付けること
+    に加え、誤答に使う行が同じ主張を裏付けないことも確かめる。別の端末で
+    同じプログラムが起動した行や、同じ要求元の別の宛先への行は、同じ主張の
+    根拠になる。それを誤答として並べると、正解が二つになる。
     """
     right = (correct_event.get("evidenceIds") or [None])[0]
     if not right:
@@ -343,10 +407,23 @@ def _evidence_pick(store: EvidenceStore, correct_event: dict,
     item = store.get(right)
     if not item or not claim:
         return None
-    if proves(item["source"]["excerpt"]) != claim:
+    if proves is None and claim_of is None:
+        return None   # 裏付けを確かめる手段が無い主張では作らない
+    if proves is not None and proves(item["source"]["excerpt"]) != claim:
+        return None
+    if claim_of is not None and claim_of(correct_event) != claim:
         return None
     prompt = prompt_for(claim)
-    others = [i for i in _ids_of(pool) if i != right][:3]
+    others: list[str] = []
+    for event in pool:
+        ident = (event.get("evidenceIds") or [None])[0]
+        if not ident or ident == right or ident in others or not store.get(ident):
+            continue
+        if claim_of is not None and claim_of(event) == claim:
+            continue   # 同じ主張の根拠にもなる行は、誤答にしない
+        others.append(ident)
+        if len(others) == 3:
+            break
     if not others:
         return None  # 比べる相手がなければ設問にならない
 
@@ -357,7 +434,7 @@ def _evidence_pick(store: EvidenceStore, correct_event: dict,
         "type": "evidence_pick",
         "category": "evidence",
         "learningObjective": objective,
-        "hint": (
+        "hint": hint or (
             "選択肢のファイル名と行番号を、上の証拠カードと照合してください。"
             "同じ単語があるだけでなく、主張している対象と動作を直接記録した行を探します。"
         ),
@@ -394,7 +471,9 @@ def _reread_event(event: dict, fact: str, store: EvidenceStore,
 
 def _grounded_choice(store: EvidenceStore, anchor: dict, pool: list[dict],
                      qid: str, objective: str, fact: str, ask: str,
-                     rest: str, nxt: str, readers: _Readers) -> dict | None:
+                     rest: str, nxt: str, readers: _Readers,
+                     same: "Callable[[str], str] | None" = None,
+                     accept: "Callable[[str], bool] | None" = None) -> dict | None:
     """引用した 1 行を読めば答えられる設問を作る。
 
     正解も誤答も、同じ一覧に実在するログ行の同じ事実から取る。誤答をこちらで
@@ -403,19 +482,31 @@ def _grounded_choice(store: EvidenceStore, anchor: dict, pool: list[dict],
 
     解説の書き出し（その形式のどの項目に書かれるか）はパーサーが持つ。
     `rest` は、形式に依らない「なぜそこを見るのか」の部分。
+
+    `same` は、画面で見分けにくい値どうしを同じとみなすための鍵（空白の
+    違いだけのコマンドラインなど）。正解と同じ鍵の値、既に選んだ誤答と同じ
+    鍵の値は誤答にしない。`accept` は、選択肢として出せる値か（表示の長さ
+    など）。正解が出せない値なら設問を作らない。
     """
     reading = _reread_event(anchor, fact, store, readers)
     if reading is None:
         return None
     right = reading.value
+    same = same or (lambda v: v)
+    accept = accept or (lambda v: True)
+    if not accept(right):
+        return None
 
     wrong: list[str] = []
+    seen = {same(right)}
     for other in pool:
         if other is anchor:
             continue
         value = _value(_reread_event(other, fact, store, readers))
-        if value and value != right and value not in wrong:
-            wrong.append(value)
+        if not value or not accept(value) or same(value) in seen:
+            continue
+        wrong.append(value)
+        seen.add(same(value))
         if len(wrong) == 3:
             break
     if not wrong:
@@ -434,6 +525,14 @@ def _grounded_choice(store: EvidenceStore, anchor: dict, pool: list[dict],
         "host": "ここが記録を残した端末です。ユーザー名や接続先と取り違えないようにします。",
         "path": "操作対象のファイルの場所です。末尾の名前だけでなく、フォルダを含めて選択肢と比べます。",
         "client": "ここが通信の要求元です。通信先のアドレスとは区別して読みます。",
+        "target": (
+            "ここが要求の宛先です。行頭の要求元とは別の項目です。URL・ホスト名・ポートは、"
+            "書かれている形のまま選択肢と比べます。"
+        ),
+        "command_line": (
+            "ここに起動時のコマンドラインが記録されています。起動した実行ファイルの項目や"
+            "親プロセスの項目とは区別し、項目全体を選択肢と比べます。"
+        ),
     }.get(fact, "その項目の値を、設問が尋ねている内容と照らし合わせてください。")
     if text and text.next:
         nxt = text.next
@@ -464,9 +563,131 @@ def _grounded_choice(store: EvidenceStore, anchor: dict, pool: list[dict],
     }
 
 
+def _tag(quiz: dict | None, template: str) -> dict | None:
+    """設問にテンプレートの識別子を付ける。作れなかった（None）ならそのまま。"""
+    if quiz is not None:
+        quiz["templateId"] = template
+    return quiz
+
+
+def _spaces(value: str) -> str:
+    """空白の違いと大文字小文字だけの差を同じとみなす鍵。画面では見分けにくい。"""
+    return " ".join(value.split()).casefold()
+
+
+def _claim_reader(store: EvidenceStore, readers: _Readers, kind: str,
+                  facts: tuple[str, ...]) -> "Callable[[dict], str]":
+    """事象 1 件が裏付ける主張を、その事象を作ったパーサーで読み直す関数。
+
+    種別が違う事象は何も裏付けない（起動記録の `path` を、ファイル操作の
+    根拠として読まない）。読めない事実が一つでもあれば空を返す。
+    """
+    def claim_of(event: dict) -> str:
+        nev = event.get("_nev")
+        if nev is None or nev.kind != kind or event.get("type") != kind:
+            return ""
+        values = [_value(_reread_event(event, f, store, readers)) for f in facts]
+        return "\0".join(values) if all(values) else ""
+    return claim_of
+
+
+def _command_line_quiz(store: EvidenceStore, shown: list[dict], anchor: dict,
+                       readers: _Readers,
+                       records: "list[NormalizedEvent] | None" = None) -> dict | None:
+    """起動記録のコマンドライン欄を読む設問（Z2）。
+
+    読むのは `command_line` の項目全体だけで、OS やシェルごとの引数の構文を
+    分解したり、オプションの意味を推し量ったりはしない。正解は引用した行から
+    パーサーが読み直した値で、親プロセスの項目や、どこかに同じ文字列がある
+    ことでは代えない（パーサーの `reread` が項目を名指しで読む）。
+
+    候補は、表示用に間引く前の起動記録（`records`）から取る。段階の一覧は
+    「端末＋プログラム名」で 1 件へ間引いてあるので、同じ cmd.exe に渡された
+    別々のコマンドラインがそこでは消えている。
+
+    採用条件（抜粋から最後まで読める・選択肢に出せる長さ・空白や大文字小文字
+    だけの違いでない）は、出題する行を選ぶ前に確かめる。条件を満たす値が
+    二つ以上あれば、どの行を選んでも誤答が揃う。段階1の他の設問と同じ行
+    ばかりにならないよう、一覧に載った別の起動記録を先に試す。
+
+    証拠として登録するのは、選んだ行と誤答の行（最大 4 件）だけ。全行を
+    登録すると、証拠表が行数に比例して膨らむ。
+    """
+    if records is None:
+        records = [e["_nev"] for e in shown if e.get("_nev") is not None]
+
+    def reading(nev: NormalizedEvent) -> FactReading | None:
+        # 保存される抜粋（`EvidenceStore.add` と同じ `visible`）から読む。
+        got = readers.reread(nev, "command_line", evidence.visible(nev.source.excerpt))
+        return got if got is not None and len(got.value) <= MAX_COMMAND_OPTION else None
+
+    # 採用できる値を、見分けられる値ごとに 1 件（最初に現れた行）。
+    usable: list[tuple[str, NormalizedEvent]] = []
+    keys: set[str] = set()
+    done: set[tuple] = set()
+    for nev in records:
+        raw = (nev.host, nev.attributes.get("command_line", ""))
+        if raw in done:
+            continue   # 同じ端末の同じコマンドラインの繰り返しは読み直さない
+        got = reading(nev)
+        if got is None:
+            continue
+        done.add(raw)
+        key = _spaces(got.value)
+        if key not in keys:
+            keys.add(key)
+            usable.append((key, nev))
+    if len(usable) < 2:
+        return None
+
+    by_nev = {id(e["_nev"]): e for e in shown if e.get("_nev") is not None}
+
+    def event_of(nev: NormalizedEvent) -> dict:
+        return by_nev.get(id(nev)) or _lesson_event(nev, store, readers)
+
+    first = [e for e in shown if e is not anchor] + [anchor]
+    targets = [e["_nev"] for e in first if e.get("_nev") is not None]
+    targets += [nev for _, nev in usable]
+    tried: set[int] = set()
+    for nev in targets:
+        if id(nev) in tried:
+            continue
+        tried.add(id(nev))
+        got = reading(nev)
+        if got is None:
+            continue
+        key = _spaces(got.value)
+        wrong = [n for k, n in usable if k != key][:3]
+        if not wrong:
+            continue
+        target = event_of(nev)
+        pool = [event_of(n) for n in wrong]
+        quiz = _tag(_grounded_choice(
+            store, target, pool, "q-endpoint-03",
+            "ログ 1 行から、起動時のコマンドラインを読み取る",
+            "command_line",
+            "この起動記録のコマンドライン欄に記録されているものはどれですか。",
+            ("\n\nコマンドラインは、起動したときに渡された文字列そのものです。"
+             "ここでは項目全体を読み取るところまでにし、各オプションが何をするかは"
+             "推測しません。同じ実行ファイルでも、渡された引数が違えば別の起動です。"),
+            "このコマンドラインで起動したプロセスの親と、同じ端末の前後の記録を確かめる",
+            readers,
+            same=_spaces,
+            accept=lambda v: len(v) <= MAX_COMMAND_OPTION,
+        ), "log.process.command-line")
+        if quiz is not None:
+            # 誤答の値を読んだ行。段階の一覧に無い行もあるので、証拠表に残して
+            # 「誤答も実在する行の値」であることを後から確かめられるようにする。
+            quiz["distractorEvidenceIds"] = [
+                e["evidenceIds"][0] for e in pool if e.get("evidenceIds")]
+            return quiz
+    return None
+
+
 def _stage_endpoint(records: int, procs: list[dict], hosts: Counter,
                     store: EvidenceStore, readers: _Readers,
-                    producers: list[str]) -> dict:
+                    producers: list[str], notes: list[str] | None = None,
+                    process_records: "list[NormalizedEvent] | None" = None) -> dict:
     """段階1：端末で何が動いたか。
 
     設問は、引用した 1 行を読めば答えられるものにする。紐づけたログ行が
@@ -474,6 +695,7 @@ def _stage_endpoint(records: int, procs: list[dict], hosts: Counter,
     理由」のような一般論は尋ねない。根拠として示せない問いは、根拠を
     添えても根拠付きにはならない。
     """
+    notes = notes if notes is not None else []
     shown = _pick(procs)
     anchor = next((e for e in shown if "attck" in e), shown[0] if shown else None)
 
@@ -490,7 +712,7 @@ def _stage_endpoint(records: int, procs: list[dict], hosts: Counter,
             "この行に渡された引数と、起動元を確かめる",
             readers,
         )
-        if which:
+        if _tag(which, "log.process.program"):
             quizzes.append(which)
 
         where = _grounded_choice(
@@ -503,8 +725,16 @@ def _stage_endpoint(records: int, procs: list[dict], hosts: Counter,
             "同じ時刻帯に、他の端末で何が記録されているかを見比べる",
             readers,
         )
-        if where:
+        if _tag(where, "log.process.host"):
             quizzes.append(where)
+
+        command = _command_line_quiz(store, shown, anchor, readers, process_records)
+        if command:
+            quizzes.append(command)
+        else:
+            notes.append("コマンドラインの読み取り: 引用した起動記録からコマンドライン欄を"
+                         "最後まで読み直せる行と、見分けられる別の値が揃わなかったため、"
+                         "この種類の設問は作りませんでした。")
 
         nev = anchor.get("_nev")
         pick = _evidence_pick(
@@ -517,8 +747,9 @@ def _stage_endpoint(records: int, procs: list[dict], hosts: Counter,
              "なりません。根拠を示すとは、この 1 行を指せるということです。"),
             "この行の前後を見て、何が起動元になっているかを確かめる",
             proves=lambda ex: _value(readers.reread(nev, "program_name", ex)),
+            claim_of=_claim_reader(store, readers, "process", ("program_name",)),
         )
-        if pick:
+        if _tag(pick, "log.process.evidence"):
             quizzes.append(pick)
 
     return {
@@ -556,7 +787,7 @@ def _stage_files(files: list[dict], store: EvidenceStore,
         "このファイルを書き込んだプロセスが、直前に何を起動したかを確かめる",
         readers,
     )
-    if where:
+    if _tag(where, "log.file.path"):
         quizzes.append(where)
 
     host = _grounded_choice(
@@ -569,7 +800,7 @@ def _stage_files(files: list[dict], store: EvidenceStore,
         "同じ端末の起動記録から、この時刻の前後に何が動いていたかを見る",
         readers,
     )
-    if host:
+    if _tag(host, "log.file.host"):
         quizzes.append(host)
 
     return {
@@ -585,8 +816,53 @@ def _stage_files(files: list[dict], store: EvidenceStore,
     }
 
 
+def _target_quiz(store: EvidenceStore, shown: list[dict], anchor: dict,
+                 readers: _Readers) -> dict | None:
+    """通信の記録から、要求の宛先を読む設問（Z1）。
+
+    正解は、引用した行からパーサーが読み直した `target`。要求元（`client`）
+    とは別の項目として読む。値は記録された粒度のまま出し、URL をホスト名へ
+    直したりはしない。宛先の悪性、通信の成否、送った中身は問わない。
+
+    同じ宛先の書き方違い（`host:443` と `http://host/...`）は、どちらも
+    「その宛先」と読めてしまうので、宛先の要点（`_destination`）が同じ値は
+    誤答にしない。要求元の設問と違う行があれば、そちらを使う。
+    """
+    def readable(e: dict) -> bool:
+        return _reread_event(e, "target", store, readers) is not None
+
+    target = next((e for e in shown if e is not anchor and readable(e)), None)
+    if target is None:
+        target = anchor if readable(anchor) else None
+    if target is None:
+        return None
+    return _tag(_grounded_choice(
+        store, target, shown, "q-network-02",
+        "ログ 1 行から、通信の宛先を読み取る",
+        "target",
+        "この要求の宛先として記録されている値はどれですか。",
+        ("\n\n記録されているのは、要求がこの宛先に向けて出されたことまでです。"
+         "宛先が悪意あるものか、通信が成功したか、何を送ったかは、この 1 行からは"
+         "分かりません。要求元（行頭）と宛先を取り違えると、通信の向きを逆に読むことに"
+         "なります。"),
+        "同じ宛先への要求が、ほかの端末や別の時刻にも記録されていないかを見る",
+        readers,
+        same=_host_of,
+    ), "log.network.target")
+
+
+def _host_of(target: str) -> str:
+    """宛先の書き方の違いを揃えた鍵。スキーム・パス・ポートを除き、小文字にする。"""
+    dest = _destination(target).casefold()
+    head, sep, port = dest.rpartition(":")
+    if sep and head and port.isdigit() and not head.endswith(":"):
+        dest = head
+    return dest
+
+
 def _stage_network(records: int, network: list[dict], store: EvidenceStore,
-                   readers: _Readers, producers: list[str]) -> dict:
+                   readers: _Readers, producers: list[str],
+                   notes: list[str] | None = None) -> dict:
     """段階3：外部へ何が出ていったか。
 
     要求元の設問も、ほかの段階と同じく、引用した 1 行から読み直せる値
@@ -595,6 +871,7 @@ def _stage_network(records: int, network: list[dict], store: EvidenceStore,
     値が正解になる。「要求元は行頭にあるので切れない」はプロキシの形式の
     事情であって、教材生成が前提にしてよいことではない。
     """
+    notes = notes if notes is not None else []
     shown = _pick(network)
     anchor = shown[0]
     quizzes = []
@@ -616,8 +893,15 @@ def _stage_network(records: int, network: list[dict], store: EvidenceStore,
             "同じ宛先への通信が繰り返されていないか、時刻を並べて確かめる",
             readers,
         )
-        if who:
+        if _tag(who, "log.network.client"):
             quizzes.append(who)
+
+        dest = _target_quiz(store, shown, anchor, readers)
+        if dest:
+            quizzes.append(dest)
+        else:
+            notes.append("通信先の読み取り: 引用した行から宛先を読み直せる記録と、"
+                         "別の宛先の記録が揃わなかったため、この種類の設問は作りませんでした。")
 
         # 根拠を選ぶ設問の主張も、引用から読み直せた要求元だけにする。
         right = _value(_reread_event(anchor, "client", store, readers))
@@ -631,8 +915,9 @@ def _stage_network(records: int, network: list[dict], store: EvidenceStore,
              "この主張の根拠にはなりません。"),
             "この端末の起動記録と時刻を突き合わせ、何が通信したのかを絞る",
             proves=lambda ex: _value(readers.reread(nev, "client", ex)),
+            claim_of=_claim_reader(store, readers, "network", ("client",)),
         )
-        if pick:
+        if _tag(pick, "log.network.evidence"):
             quizzes.append(pick)
 
     noun = "・".join(readers.nouns(producers, "network")) or DEFAULT_NETWORK_NOUN
@@ -700,6 +985,7 @@ def _place(c: NormalizedEvent) -> tuple:
 
 
 def _best_pair(candidates: list[NormalizedEvent], window: float,
+               part: "Callable[[NormalizedEvent], tuple | None] | None" = None,
                ) -> "tuple[tuple | None, int]":
     """相関の条件を満たす組のうち、最も近いものを返す。比較回数も返す。
 
@@ -758,11 +1044,17 @@ def _best_pair(candidates: list[NormalizedEvent], window: float,
     # 1 件が端末名と複数の IP を持つことがあるので、同じ候補が複数の仕切りへ
     # 入ることはある。端末の呼び名は 1 件あたりせいぜい数個なので、総量は
     # 件数に比例したままになる。
+    # `part` を渡すと、仕切りにもう一つ鍵を足す（None を返した候補は使わない）。
+    # 同じ仕切りの中でだけ組を作るので、「最も近い組」は常にその鍵が一致する
+    # 組になる。時間差の設問は、ここへ時刻の細かさと秒未満の端数を渡す。
     groups: dict[tuple, tuple[list, list]] = {}
     for c in candidates:
+        extra = part(c) if part is not None else ()
+        if extra is None:
+            continue
         slot = 0 if c.kind == "process" else 1
         for key in c.correlation_keys:
-            at = (c.timestamp.basis, key)
+            at = (c.timestamp.basis, key) + extra
             if at not in groups:
                 groups[at] = ([], [])
             groups[at][slot].append(c)
@@ -900,7 +1192,212 @@ def _correlation_quiz(store: EvidenceStore, candidates: list[NormalizedEvent],
         },
         "nextInvestigation": "この二つの記録の間に、同じ端末で他に何が記録されているかを見る",
         "status": "correlated",
+        "templateId": "log.correlation.order",
     }, "", [first, other]
+
+
+def _resolution_text(resolution: float) -> str:
+    """時刻の細かさの言い方。"""
+    if resolution >= 1:
+        return "秒単位"
+    digits = round(-math.log10(resolution))
+    return f"小数点以下 {digits} 桁（{resolution:g} 秒）単位"
+
+
+def _recorded_gap_seconds(a: "timeline.Stamp", b: "timeline.Stamp") -> tuple[int | None, str]:
+    """二つの時刻の差を、整数秒で曖昧なく言えるときだけ返す。言えなければ理由。
+
+    原文に書かれた桁（`resolution`）が両方で同じで、差がその細かさで見て
+    ちょうど整数秒であることを求める。細かさの違う二つ（秒までの記録と
+    ミリ秒までの記録）は、差の端数が記録から決まらないので使わない。
+    浮動小数点の誤差で 33.9999 秒を 34 秒と言わないよう、差を「細かさの
+    何倍か」の整数に直してから確かめる。
+    """
+    ra, rb = a.resolution, b.resolution
+    if not ra or not rb:
+        return None, "時刻の桁数（どこまで細かく記録されているか）が分からない"
+    if ra != rb:
+        return None, "二つの記録で、時刻が記録されている細かさが違う"
+    if ra > 1:
+        return None, "時刻が秒より粗い単位でしか記録されていない"
+    steps = round((b.sort - a.sort) / ra)
+    per_second = round(1 / ra)
+    if steps <= 0:
+        return None, "二つの記録が同じ時刻で、差が無い"
+    if steps % per_second:
+        return None, "時間差が整数秒にならない"
+    return steps // per_second, ""
+
+
+def _gap_part(c: NormalizedEvent) -> tuple | None:
+    """時間差の設問で、組にしてよい記録を仕切る鍵。使えない記録は None。
+
+    鍵は (時刻の細かさ, 秒未満の端数を細かさで数えた値)。同じ鍵どうしなら、
+    細かさが揃い、差はちょうど整数秒になる。最も近い組が条件を満たさない
+    ときにも、条件を満たす別の組を取りこぼさない（`_best_pair` はこの鍵ごと
+    に最も近い組を探す）。
+    """
+    r = c.timestamp.resolution
+    if not r or r > 1:
+        return None
+    per_second = round(1 / r)
+    steps = round((c.timestamp.sort % 1) / r) % per_second
+    return (r, steps)
+
+
+def _gap_quiz(store: EvidenceStore, candidates: list[NormalizedEvent], qid: str,
+              avoid: set[str], window: float = CORRELATION_WINDOW_SECONDS,
+              readers: _Readers | None = None) -> tuple[dict | None, str, list[dict]]:
+    """二つの記録の時刻が何秒離れているかを求める設問（Z3）。
+
+    組の選び方は、前後関係の設問と同じ条件（同じ時計の基準・同じ端末・
+    相関の時間幅・同時刻は使わない）を `_best_pair` でそのまま使う。前後の
+    設問と同じ組ばかりにならないよう、`avoid` の記録を除いた中に組があれば
+    そちらを使い、無ければ同じ組を使う。
+
+    正解は二つの原文の時刻から再計算できる値だけにする（`_recorded_gap_seconds`）。
+    誤答は出題のために作った数値の候補で、記録から得た値ではない。そのことを
+    解説で明示する。記録の時間差から、因果や処理にかかった時間は言わない。
+    """
+    readers = readers or _Readers()
+    best = None
+    rest = [c for c in candidates if c.evidence_id not in avoid]
+    if len(rest) >= 2:
+        best, _ = _best_pair(rest, window, _gap_part)
+    if best is None and len(candidates) >= 2:
+        best, _ = _best_pair(candidates, window, _gap_part)
+    if best is None:
+        return None, ("時間差の計算: 同じ端末・同じ時刻基準で近接し、同じ細かさで"
+                      "記録されていて差がちょうど整数秒になる二つの記録が見つからな"
+                      "かったため、この種類の設問は作りませんでした。"), []
+    _, _, _, _, pick_first, pick_other, shared = best
+    seconds, why = _recorded_gap_seconds(pick_first.timestamp, pick_other.timestamp)
+    if seconds is None:
+        return None, (f"時間差の計算: {why}ため、記録された時刻から時間差を一つに"
+                      "決められず、この種類の設問は作りませんでした。"), []
+
+    first = _lesson_event(pick_first, store, readers)
+    other = _lesson_event(pick_other, store, readers)
+    if not first.get("evidenceIds") or not other.get("evidenceIds"):
+        return None, ("時間差の計算: 採用した二つの記録の出典を保存できなかったため、"
+                      "この種類の設問は作りませんでした。"), []
+    ids = [first["evidenceIds"][0], other["evidenceIds"][0]]
+
+    # 出題用の数値候補。記録から得た値ではない。整数秒どうしなので、表示の
+    # 丸めで正解と同じ見た目になるものは出ないが、念のため表示の文字列で
+    # 重複と正解との一致を除く。
+    label = lambda n: f"{n} 秒"  # noqa: E731
+    wrong: list[str] = []
+    for n in (seconds + 1, seconds - 1, seconds + 60, seconds + 10, seconds * 2):
+        text = label(n)
+        if n > 0 and text != label(seconds) and text not in wrong:
+            wrong.append(text)
+        if len(wrong) == 3:
+            break
+    if len(wrong) < 3:
+        return None, "時間差の計算: 誤答にできる数値の候補が足りませんでした。", []
+    at = pick_index(qid + ids[0] + ids[1], len(wrong) + 1)
+    options = wrong[:at] + [label(seconds)] + wrong[at:]
+    stamp = pick_first.timestamp
+    prompt = (
+        f"同一端末（{shared}）の二つの記録を見比べます。下に示した根拠の時刻から、"
+        "二つの記録の時刻は何秒離れていますか。"
+    )
+    return {
+        "id": qid,
+        "type": "single_choice",
+        "category": "correlation",
+        "templateId": "log.correlation.gap",
+        "learningObjective": "二つの記録の時刻を同じ基準で読み、時間差を計算する",
+        "hint": (
+            "二つの証拠の日時を、タイムゾーンと小数点以下の桁まで含めて読み取ります。"
+            "同じ基準の時刻どうしで引き算し、単位（秒）をそろえて選択肢と比べてください。"
+            "時間差は記録の間隔であり、処理にかかった時間や因果とは区別します。"
+        ),
+        "q": prompt,
+        "prompt": prompt,
+        "options": options,
+        "correct": at,
+        "optionKind": "arithmetic-candidates",
+        "explain": (
+            f"{first['time']['display']} と {other['time']['display']} の差は "
+            f"{seconds} 秒です。どちらの時刻も{_resolution_text(stamp.resolution)}で"
+            f"記録されており、{_basis_label(stamp.basis)}ため、そのまま引き算できます。\n\n"
+            "ほかの選択肢は、出題のために作った数値の候補です。記録から得た値ではありません。\n\n"
+            "この時間差は、二つの記録が書かれた間隔です。一方の処理にかかった時間や、"
+            "一方が他方を引き起こしたことは、この差からは言えません。"
+        ),
+        "explanation": "",
+        "evidenceIds": ids,
+        "subjectEvidenceIds": list(ids),
+        "correlation": {
+            "reason": f"同一端末（{shared}）で {_gap_text(seconds)}",
+            "gapSeconds": seconds,
+            "resolutionSeconds": stamp.resolution,
+            "windowSeconds": window,
+            "hostKey": shared,
+            "basis": stamp.basis,
+            "types": [first["type"], other["type"]],
+        },
+        "nextInvestigation": "同じ端末で、この二つの記録の間に何が記録されているかを並べて見る",
+        "status": "correlated",
+    }, "", [first, other]
+
+
+def _file_evidence_quiz(store: EvidenceStore, files: list[dict], procs: list[dict],
+                        avoid: set[str], readers: _Readers) -> dict | None:
+    """ファイル操作の根拠となる行を選ぶ設問（Z4）。
+
+    主張は「端末 H で、パス P の <操作> が記録された」。操作の呼び名は
+    パーサーが保証するもの（`operation_label`）だけを使い、作成を「書き込み」
+    と言い換えたりしない。主張の三つ（端末・パス・操作）は、どれも引用した
+    行からパーサーが読み直す。
+
+    誤答には、同じ段階のファイル操作の行に加えて、同じパスをコマンドライン
+    などに含むだけの起動記録を優先して並べる。どれも、その行を作ったパーサー
+    で読み直して同じ主張を裏付けないことを確かめてから使う。
+
+    ほかの設問が解答前に示す行（`avoid`）は、なるべく正解にしない。示された
+    行をそのまま選べば済んでしまうため。
+    """
+    claim_of = _claim_reader(store, readers, "file", ("host", "path", "operation"))
+
+    def claim(e: dict) -> str:
+        got = claim_of(e)
+        if not got:
+            return ""
+        host, path, op = got.split("\0")
+        parser = readers.parser(e["_nev"].parser_id)
+        name = parser.operation_label("file", op) if parser else ""
+        return "\0".join((host, path, name)) if name else ""
+
+    usable = [e for e in files if claim(e)]
+    anchor = next((e for e in usable if (e.get("evidenceIds") or [""])[0] not in avoid),
+                  usable[0] if usable else None)
+    if anchor is None:
+        return None
+    right = claim(anchor)
+    host, path, name = right.split("\0")
+
+    def mentions(e: dict) -> bool:
+        return path.casefold() in _excerpt_of(e, store).casefold()
+
+    pool = ([e for e in procs if mentions(e)] + [e for e in files if e is not anchor]
+            + [e for e in procs if not mentions(e)])
+    return _tag(_evidence_pick(
+        store, anchor, pool, "q-files-evidence",
+        "ファイル操作の主張の根拠となるログ行を特定する",
+        right,
+        lambda _: f"端末 {host} で、{path} の{name}が記録されたことを直接示す行はどれですか。",
+        (f"この主張を支えるのは、端末 {host} の記録として、{path} の{name}そのものを"
+         "書き留めた 1 行です。同じパスが起動時のコマンドラインに現れるだけの行や、"
+         "別の端末・別の操作の行は、この主張の根拠になりません。"),
+        "このファイルを操作したプロセスを、同じ端末の起動記録と時刻から絞り込む",
+        claim_of=claim,
+        hint=("選択肢の行を、上の証拠カードで確かめてください。端末・対象のパス・操作の"
+              "種類の三つが、その行のファイル操作の項目として記録されているかを見ます。"
+              "パスがコマンドラインなど別の項目に現れるだけの行は根拠になりません。"),
+    ), "log.file.evidence")
 
 
 def _attck_quiz(store: EvidenceStore, stages: list[dict], qid: str,
@@ -959,6 +1456,7 @@ def _attck_quiz(store: EvidenceStore, stages: list[dict], qid: str,
         "subjectEvidenceIds": list(event["evidenceIds"]),
         "nextInvestigation": "同じ端末で、この手法に関わる他の記録が残っていないかを見る",
         "status": "observed",
+        "templateId": "log.attck.technique",
     }, at, ""
 
 
@@ -1023,6 +1521,7 @@ def _limits_quiz(store: EvidenceStore, stages: list[dict], qid: str,
                 "subjectEvidenceIds": list(event["evidenceIds"]),
                 "nextInvestigation": f"{target} への通信が、どのプロセスから出たのかを端末の記録で確かめる",
                 "status": "observed",
+                "templateId": "log.limits.network",
             }, at, ""
     return None, -1, ("通信の記録から要求元と宛先を読み取れなかったため、"
                       "言えることを選ぶ設問は作りませんでした。")
@@ -1194,8 +1693,11 @@ def _introduction(stages: list[dict], events: list[NormalizedEvent],
     ]
     if any(e.get("attck") for s in stages for e in s["events"]):
         objectives.append("観測された手法を、根拠付きで MITRE ATT&CK へ対応付ける")
-    # 1 段階あたり数分の見積り。根拠のある数字ではないので、目安と明示する。
-    minutes = max(5, 3 * len(stages))
+    # 実際に出す設問 1 問あたり約 2 分と、段階ごとに記録を読む約 1 分の見積り。
+    # 根拠のある数字ではないので、目安と明示する。候補の数ではなく、選んだ
+    # 設問から数える。
+    questions = sum(len(s.get("quizzes") or []) for s in stages)
+    minutes = max(5, 2 * questions + len(stages))
     return {
         "scenario": ("実際に記録されたログを読み、何が起きたのかを段階を追って"
                      "確かめます。各段階の設問は、示された記録から答えられます。"),
@@ -1222,23 +1724,52 @@ def _require_normalized(events) -> None:
             )
 
 
+
+
 def build_lesson(name: str, sources: dict[str, str], lesson_id: str,
                  parser_ids: list[str] | None = None,
-                 registry: "parsers.ParserRegistry | None" = None) -> dict | None:
+                 registry: "parsers.ParserRegistry | None" = None,
+                 max_questions: int | None = quiz_select.MAX_QUESTIONS) -> dict | None:
     """{論理パス: 本文} から教材を作る。解析は必ずパーサーレジストリを通す。
 
     `parser_ids` はプロファイルが指定したパーサー。None なら登録済みの
     すべてを候補にし、各ログで `detect()` に判定させる（自動判定）。
     解析の結果（どのパーサーが何を読んだか）も必要なときは、
     `parsers.REGISTRY.parse_sources()` と `lesson_from_parsed()` を
-    直接呼ぶ。
+    直接呼ぶ。`max_questions` は `lesson_from_parsed` を参照。
     """
     reg = registry if registry is not None else parsers.REGISTRY
-    return lesson_from_parsed(name, reg.parse_sources(sources, parser_ids), lesson_id)
+    return lesson_from_parsed(name, reg.parse_sources(sources, parser_ids), lesson_id,
+                              max_questions=max_questions)
 
 
-def lesson_from_parsed(name: str, parsed: ParsedSources, lesson_id: str) -> dict | None:
-    """正規化イベントから教材を作る。ログの形式には触れない。"""
+def _not_generated(candidates: list[tuple[str, dict]],
+                   reasons: dict[str, str]) -> list[dict]:
+    """候補を 1 問も作れなかったテンプレートと、その理由。"""
+    made = {quiz_select.template_of(q) for _, q in candidates}
+    out = []
+    for template, (label, _) in TEMPLATES.items():
+        if template in made:
+            continue
+        out.append({
+            "templateId": template,
+            "label": label,
+            "reason": reasons.get(template)
+            or "この入力には、この種類の設問を作るための根拠が揃いませんでした。",
+        })
+    return out
+
+
+def lesson_from_parsed(name: str, parsed: ParsedSources, lesson_id: str,
+                       max_questions: int | None = quiz_select.MAX_QUESTIONS,
+                       ) -> dict | None:
+    """正規化イベントから教材を作る。ログの形式には触れない。
+
+    組み立ては二段階。まず全テンプレートの設問を、根拠を確かめたうえで
+    候補として作る。次に候補から `max_questions` 問までを選び
+    （`quiz_select.select`）、選んだ設問から段階・証拠・導入・レポートを
+    確定する。None を渡すと候補を全部残す（テンプレートの確認用）。
+    """
     events = parsed.events
     _require_normalized(events)
     if not events:
@@ -1254,16 +1785,20 @@ def lesson_from_parsed(name: str, parsed: ParsedSources, lesson_id: str) -> dict
     endpoint = [e for e in events if e.kind != "network"]
     hosts = Counter(e.host for e in endpoint)
 
+    # テンプレートごとの「作れなかった理由」。段階の中で作る設問の理由は
+    # 段階が書き込む。
+    correlation_notes: list[str] = []
     stages = []
     if procs:
         stages.append(_stage_endpoint(len(endpoint), procs, hosts, store, readers,
-                                      _producers(events, "process")))
+                                      _producers(events, "process"), correlation_notes,
+                                      [e for e in events if e.kind == "process"]))
     if files:
         stages.append(_stage_files(files, store, readers))
     if network:
         stages.append(_stage_network(
             sum(1 for e in events if e.kind == "network"), network, store, readers,
-            _producers(events, "network"),
+            _producers(events, "network"), correlation_notes,
         ))
 
     if not stages:
@@ -1272,7 +1807,6 @@ def lesson_from_parsed(name: str, parsed: ParsedSources, lesson_id: str) -> dict
     # 観測を手法へ対応させる設問と、1 行から言えることを分ける設問。
     # どちらも根拠の事象がある段階へ足す。別の段階へ置くと、その設問が
     # 指す記録が画面に無い段階になってしまう。
-    correlation_notes: list[str] = []
     for maker, qid in ((_attck_quiz, "q-attck-01"), (_limits_quiz, "q-limits-01")):
         quiz, at, why = maker(store, stages, qid, readers)
         if quiz:
@@ -1290,25 +1824,57 @@ def lesson_from_parsed(name: str, parsed: ParsedSources, lesson_id: str) -> dict
     # これは独立した段階にする。二つの記録は別の段階から来ることがあり、
     # 既存の段階へ足すと、その段階には無い記録を根拠として指すことになる。
     # 突き合わせ自体が一つの作業なので、段階として分けるほうが筋も通る。
-    corr, why, pair = _correlation_quiz(
-        store, correlation_candidates(events), "q-correlate-01", readers=readers
-    )
+    #
+    # 段階に載せる記録は、選ばれた設問が使うものだけにする（下で確定する）。
+    # 設問ごとの記録をここで覚えておく。
+    pair_events: dict[int, list[dict]] = {}
+    cands = correlation_candidates(events)
+    corr, why, pair = _correlation_quiz(store, cands, "q-correlate-01", readers=readers)
     if corr:
+        pair_events[id(corr)] = pair
+        gap, gap_why, gap_pair = _gap_quiz(
+            store, cands, "q-correlate-02",
+            {i for e in pair for i in e.get("evidenceIds", [])}, readers=readers,
+        )
+        corr_quizzes = [corr]
+        if gap:
+            pair_events[id(gap)] = gap_pair
+            corr_quizzes.append(gap)
+        else:
+            correlation_notes.append(gap_why)
         stages.append({
             "id": "correlate",
             "name": "関連付け — 二つの記録を突き合わせる",
             "intro": (
                 "ここまでは、ログを種類ごとに分けて読んできました。"
                 "最後に、別々に見てきた記録を並べて突き合わせます。\n\n"
-                "突き合わせて分かるのは、記録された順序までです。"
+                "突き合わせて分かるのは、記録された順序と時刻の差までです。"
                 "近い時刻に並んでいることは、一方が他方を引き起こした"
                 "根拠にはなりません。"
             ),
-            "events": [dict(e) for e in pair],
-            "quizzes": [corr],
+            "events": [],
+            "quizzes": corr_quizzes,
         })
     elif why:
         correlation_notes.append(why)
+
+    # ファイル操作の根拠を選ぶ設問（Z4）。ほかの設問が解答前に示す行を
+    # 正解にしないよう、候補がそろってから作る。
+    files_stage = next((s for s in stages if s["id"] == "files"), None)
+    if files_stage is not None:
+        shown_before = {
+            i for s in stages for q in s.get("quizzes") or []
+            for i in q.get("subjectEvidenceIds") or []
+        } | {i for e in pair for i in e.get("evidenceIds", [])}
+        pick = _file_evidence_quiz(store, files_stage["events"], procs, shown_before,
+                                   readers)
+        if pick:
+            files_stage["quizzes"].append(pick)
+        else:
+            correlation_notes.append(
+                "ファイル操作の根拠選択: 端末・パス・操作の種類をすべて引用から読み直せる"
+                "ファイル操作の行と、誤答にできる別の行が揃わなかったため、この種類の"
+                "設問は作りませんでした。")
 
     # 根拠の無い設問は落とす。根拠が不足する問題は生成しない。
     # 一般論だけの設問が混ざると、根拠を示すという教材の約束が崩れる。
@@ -1317,15 +1883,57 @@ def lesson_from_parsed(name: str, parsed: ParsedSources, lesson_id: str) -> dict
         if raw is None:
             # 段階によっては設問を 1 つしか作らない。ここで同じ形に揃える。
             raw = [stage["quiz"]] if stage.get("quiz") else []
-        kept = [
+        stage["quizzes"] = [
             q for q in raw
             if q.get("evidenceIds") and all(store.get(i) for i in q["evidenceIds"])
         ]
-        stage["quizzes"] = kept
+
+    # ---- 出題する設問を選ぶ ----
+    #
+    # 候補から上限までを選び、選んだ設問だけで段階を確定する。上限のために
+    # 設問をすべて外された段階は残さない（空の段階になる）。もともと設問を
+    # 作れなかった段階は、観測できた記録を見せる意味があるので、理由を添えて
+    # 残す（下の note）。
+    candidates = [(s["id"], q) for s in stages for q in s["quizzes"]]
+    picked = quiz_select.select(candidates, TEMPLATE_PRIORITY, max_questions,
+                                REVERSE_TEMPLATES)
+    keep = {id(q) for _, q in picked}
+    kept_stages = []
+    for stage in stages:
+        had = bool(stage["quizzes"])
+        stage["quizzes"] = [q for q in stage["quizzes"] if id(q) in keep]
+        if had and not stage["quizzes"]:
+            continue
+        if stage["id"] == "correlate":
+            seen_ids: set[str] = set()
+            for q in stage["quizzes"]:
+                for e in pair_events.get(id(q), []):
+                    ident = (e.get("evidenceIds") or [None])[0]
+                    if ident and ident not in seen_ids:
+                        seen_ids.add(ident)
+                        stage["events"].append(dict(e))
         # `quiz` は旧形式の表示経路が読む。残った先頭を充てる。
-        stage["quiz"] = kept[0] if kept else None
+        stage["quiz"] = stage["quizzes"][0] if stage["quizzes"] else None
+        kept_stages.append(stage)
+    stages = kept_stages
     if not stages:
         return None
+
+    template_reasons: dict[str, str] = {}
+    for note in correlation_notes:
+        for template, prefix in (
+            ("log.process.command-line", "コマンドラインの読み取り"),
+            ("log.network.target", "通信先の読み取り"),
+            ("log.correlation.gap", "時間差の計算"),
+            ("log.file.evidence", "ファイル操作の根拠選択"),
+        ):
+            if note.startswith(prefix):
+                template_reasons[template] = note
+    selection = quiz_select.summary(
+        candidates, picked, max_questions,
+        {k: v[0] for k, v in TEMPLATES.items()},
+        _not_generated(candidates, template_reasons),
+    )
 
     # 教材へ残す証拠は、実際に画面へ出る事象と設問が指しているものだけにする。
     used: set[str] = set()
@@ -1334,10 +1942,12 @@ def lesson_from_parsed(name: str, parsed: ParsedSources, lesson_id: str) -> dict
             used.update(event.get("evidenceIds", []))
         for quiz in stage["quizzes"]:
             used.update(quiz.get("evidenceIds", []))
+            used.update(quiz.get("subjectEvidenceIds", []))
+            used.update(quiz.get("distractorEvidenceIds", []))
             for option in quiz.get("options", []):
                 if isinstance(option, dict) and option.get("evidenceId"):
                     used.add(option["evidenceId"])
-    evidence = {k: v for k, v in store.as_json().items() if k in used}
+    kept = {k: v for k, v in store.as_json().items() if k in used}
 
     # 段階から設問が全部落ちても、その段階を消さずに残す。観測できた事実は
     # 見せたうえで「根拠が足りず設問を作れなかった」と言うほうが、黙って
@@ -1348,6 +1958,20 @@ def lesson_from_parsed(name: str, parsed: ParsedSources, lesson_id: str) -> dict
             correlation_notes.append(
                 f"{stage['name']}: 根拠が足りず、設問を作れませんでした。"
             )
+
+    unknowns = _unknowns(stages, _techniques(stages), correlation_notes)
+    if selection["notSelected"]:
+        labels = []
+        for row in selection["notSelected"]:
+            if row["label"] not in labels:
+                labels.append(row["label"])
+        unknowns.append({
+            "topic": "出題数の上限で採用しなかった設問",
+            "detail": (f"根拠の揃った設問が {selection['candidates']} 問ありましたが、"
+                       f"1 回の演習は {max_questions} 問までにしているため、"
+                       f"次の種類の設問を出していません: {'、'.join(labels)}。"
+                       "根拠が足りなかったわけではありません。"),
+        })
 
     return {
         "id": lesson_id,
@@ -1360,12 +1984,14 @@ def lesson_from_parsed(name: str, parsed: ParsedSources, lesson_id: str) -> dict
             "note": "読み込んだデータセットのログから自動生成した演習です。内容を確認のうえ使用してください。",
             "inputs": sorted(parsed.sources),
         },
-        "evidence": evidence,
+        "generator": {"quizTemplates": quiz_select.TEMPLATES_VERSION},
+        "selection": selection,
+        "evidence": kept,
         "introduction": _introduction(stages, events, hosts, parsed.sources, readers),
         "report": {
             "timeline": _timeline(stages, store),
             "techniques": _techniques(stages),
-            "unknowns": _unknowns(stages, _techniques(stages), correlation_notes),
+            "unknowns": unknowns,
             "nextInvestigations": _next_investigations(stages),
         },
         "recap": {

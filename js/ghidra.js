@@ -443,7 +443,7 @@ export async function renderGhidra(mount, opts = {}) {
       jobPanel.append(el('p', 'feedback is-ok', `演習ができました：${visible(s.title || '')}`));
       jobPanel.append(
         el('p', null,
-          `設問 ${s.questions || 0} 問（文字列の参照 ${c.string || 0}・直接呼び出し ${c.call || 0}・外部関数 ${c.external || 0}）。自動生成した下書きです。使う前に内容を確認してください。`)
+          `設問 ${s.questions || 0} 問（文字列の参照 ${c.string || 0}・直接呼び出し ${c.call || 0}・外部関数 ${c.external || 0}・記録から言えないこと ${c.limits || 0}）。自動生成した下書きです。使う前に内容を確認してください。`)
       );
       (s.skipped || []).forEach((t) => jobPanel.append(el('div', 'member__warn', `⚠ ${visible(t)}`)));
       if ((s.truncated || []).length) {

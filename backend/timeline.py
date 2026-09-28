@@ -48,12 +48,18 @@ class Stamp:
 
     `comparable` は `basis == "utc"` の言い換え。画面が「基準不明」の印を
     出すかどうかに使う。
+
+    `resolution` は、原文に書かれていた時刻の細かさ（秒）。`16:45:10` なら
+    1.0、`16:45:10.750` なら 0.001。0 は「分からない」。時間差を数として
+    問うときに、どこまでの桁が記録に書かれていたかを確かめるのに使う。
+    書き方を知っているのはパーサーなので、パーサーが渡す。
     """
 
     display: str
     sort: float
     comparable: bool
     basis: str = ""
+    resolution: float = 0.0
 
     @property
     def known(self) -> bool:
@@ -127,12 +133,14 @@ def _basis(tz: str | None, source: str) -> str:
 
 
 def stamp(year: int, mon: int, day: int, hh: int, mm: int, ss: int,
-          frac: float, tz: str | None, display: str, source: str = "") -> Stamp:
+          frac: float, tz: str | None, display: str, source: str = "",
+          resolution: float = 0.0) -> Stamp:
     """パーサーが取り出した暦の値から `Stamp` を作る。
 
     `display` はログに書かれていたとおりの表記。`tz` は `+0900` のような
     オフセットで、書かれていなければ None。`source` はその行の論理パスで、
-    タイムゾーンの無い行の比較基準に使う。
+    タイムゾーンの無い行の比較基準に使う。`resolution` は原文の時刻の
+    細かさ（秒）。渡さなければ「分からない」（0）。
 
     暦として成り立たない値（13 月、2 月 31 日など）は読めなかったことにする。
     桁数の揃った数字であっても、存在しない時刻を並べ替えへ紛れ込ませない。
@@ -147,6 +155,7 @@ def stamp(year: int, mon: int, day: int, hh: int, mm: int, ss: int,
         sort=sort,
         comparable=bool(tz),
         basis=_basis(tz, source),
+        resolution=resolution if resolution and resolution > 0 else 0.0,
     )
 
 
