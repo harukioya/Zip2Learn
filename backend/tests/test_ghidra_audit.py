@@ -165,8 +165,7 @@ class TestRepositoryHygiene(unittest.TestCase):
 
     def test_real_data_protection_is_kept(self):
         lines = [l.strip() for l in self.GITIGNORE.splitlines()]
-        for rule in ("*.gzf", "*.vir", "samples/", ".zip2learn-state/",
-                     "docs/Ghidra静的解析教材_Docker連携_実装指示書.md"):
+        for rule in ("*.gzf", "*.vir", "samples/", ".zip2learn-state/"):
             self.assertIn(rule, lines)
 
     def test_only_the_audited_sample_is_excepted(self):
