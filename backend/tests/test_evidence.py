@@ -314,6 +314,7 @@ class TestQuestionsAreGrounded(unittest.TestCase):
     def test_ungrounded_questions_are_dropped(self):
         """A quiz with no evidence must not survive into the lesson."""
         original = explain._stage_files
+        original_pick = explain._file_evidence_quiz
 
         def stripped(*args, **kwargs):
             stage = original(*args, **kwargs)
@@ -321,11 +322,20 @@ class TestQuestionsAreGrounded(unittest.TestCase):
                 quiz["evidenceIds"] = []
             return stage
 
+        def stripped_pick(*args, **kwargs):
+            # ファイル操作の根拠選択（段階の外で作って、この段階へ足す設問）も同じ。
+            quiz = original_pick(*args, **kwargs)
+            if quiz:
+                quiz["evidenceIds"] = []
+            return quiz
+
         explain._stage_files = stripped
+        explain._file_evidence_quiz = stripped_pick
         try:
             lesson = build_lesson("t", sources(), "gen-test")
         finally:
             explain._stage_files = original
+            explain._file_evidence_quiz = original_pick
         stage = next(s for s in lesson["stages"] if s["id"] == "files")
         # フェーズ3以降、段階は消さない。観測できた事実は見せたうえで、
         # 設問を作れなかったことを言う（空の段階を黙って消さない）。
@@ -644,6 +654,16 @@ class TestQuestionsAnswerableFromTheLog(unittest.TestCase):
                 continue
             checked += 1
             excerpt = self.lesson["evidence"][quiz["evidenceIds"][0]]["source"]["excerpt"]
+            if quiz["id"] == "q-files-evidence":
+                # 主張は「端末・パス・操作」の三つ。どれもファイル操作の項目から読む。
+                reader = itm2.PARSER
+                host = reader.reread("file", "host", excerpt).value
+                path = reader.reread("file", "path", excerpt).value
+                op = reader.operation_label(
+                    "file", reader.reread("file", "operation", excerpt).value)
+                self.assertEqual(
+                    quiz["q"], f"端末 {host} で、{path} の{op}が記録されたことを直接示す行はどれですか。")
+                continue
             claim = quiz["q"].split("「", 1)[-1].split(" が", 1)[0]
             proves = provers.get(quiz["id"])
             self.assertIsNotNone(proves, f'{quiz["id"]}: 検証関数が未定義')

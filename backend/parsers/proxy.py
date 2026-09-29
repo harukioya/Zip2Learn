@@ -113,6 +113,7 @@ def parse_timestamp(stamp: str, source: str = "") -> timeline.Stamp:
         year=int(g["year"]), mon=mon, day=int(g["day"]),
         hh=int(g["hh"]), mm=int(g["mm"]), ss=int(g["ss"]),
         frac=0.0, tz=g.get("tz"), display=m.group(0).strip(), source=source,
+        resolution=1.0,   # この形式の時刻は秒までしか書かない
     )
 
 
@@ -121,20 +122,24 @@ def client(excerpt: str) -> str:
     return excerpt.split(" ", 1)[0] if excerpt else ""
 
 
-def target(excerpt: str) -> str:
-    """行が示す宛先。要求元を除いた、宛先らしい最初の語。
+#: 抜粋から要求の部分を読む。閉じる引用符まで残っていることを求める。
+#: 抜粋が要求の途中で切り詰められていると、宛先の一部だけを読むことになる。
+_REQUEST = re.compile(r'^\S+ \S+ \S+ \[[^\]]+\] "(?P<method>\w+) (?P<target>[^\s"]+)(?: [^"]*)?"')
 
-    抜粋の末尾が切り詰められていると宛先が残らないことがある。その場合は
-    空を返し、呼び出し側は「読めない」として扱う。
+
+def target(excerpt: str) -> str:
+    """行が示す宛先。要求（`"方式 宛先 版"`）の 2 語目を、書かれたとおりに返す。
+
+    URL をホスト名へ直したりはしない。記録された粒度のまま返す。行の形に
+    当たらない、要求の途中で切れている、プロキシ宛ての書き方でない、の
+    いずれかなら空を返し、呼び出し側は「読めない」として扱う。
     """
-    if " " not in (excerpt or ""):
+    m = _REQUEST.match(excerpt or "")
+    if not m:
         return ""
-    who = client(excerpt)
-    for token in excerpt.split():
-        if "://" in token or token.count(".") >= 2:
-            if token != who:
-                return token
-    return ""
+    if request_form(m.group("method"), m.group("target")) != "proxy":
+        return ""
+    return m.group("target")
 
 
 class ProxyParser(Parser):
@@ -150,6 +155,12 @@ class ProxyParser(Parser):
     FACT_TEXTS = {
         ("network", "client"): FactText(
             where="プロキシの記録は、行の先頭に要求元のアドレスを書きます。",
+        ),
+        ("network", "target"): FactText(
+            where=("プロキシの記録は、引用符の中に「方式 宛先 版」の順で要求を書きます。"
+                   "宛先は 2 語目で、CONNECT なら「ホスト:ポート」、GET などなら URL の"
+                   "形で残ります。"),
+            next="同じ宛先への要求がほかの端末からも記録されていないかを見比べる",
         ),
     }
 

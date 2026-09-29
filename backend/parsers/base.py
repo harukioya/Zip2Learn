@@ -51,9 +51,13 @@ REQUIRED_ATTRIBUTES: dict[str, tuple[str, ...]] = {
 
 #: 教材生成が `reread()` で尋ねる事実。パーサーが答えられないものは
 #: None を返せばよく、その事実を使う設問は作られない。
+#:
+#: `file` の `operation` は、その行が記録している操作の種類（パーサーが
+#: 使う原文の値。例: create / write）。呼び名は `operation_label()` で尋ねる。
+#: 呼び名を返せない操作は、「書き込み」などと言い換えて出題しない。
 FACTS: dict[str, tuple[str, ...]] = {
     "process": ("program_name", "command_line", "host"),
-    "file": ("path", "host"),
+    "file": ("path", "host", "operation"),
     "registry": ("path",),
     "network": ("client", "target"),
 }
@@ -268,6 +272,8 @@ class Parser:
       FACT_TEXTS    (種別, 事実) → FactText。設問の解説の書き出し。
       RECORD_NOUNS  種別 → この形式の記録の呼び名（段階の導入文に使う）。
       ABOUTS        種別 → この形式の記録が何を残すかの一文。
+      OPERATION_LABELS (種別, reread で読んだ操作の値) → 操作の呼び名
+                    （「作成」「書き込み」など）。その形式が保証する操作だけを書く。
     """
 
     id: str = ""
@@ -277,6 +283,7 @@ class Parser:
     FACT_TEXTS: Mapping[tuple[str, str], FactText] = {}
     RECORD_NOUNS: Mapping[str, str] = {}
     ABOUTS: Mapping[str, str] = {}
+    OPERATION_LABELS: Mapping[tuple[str, str], str] = {}
 
     def detect(self, source: InputSource) -> float:
         raise NotImplementedError
@@ -303,6 +310,10 @@ class Parser:
 
     def about(self, kind: str) -> str:
         return self.ABOUTS.get(kind, "")
+
+    def operation_label(self, kind: str, value: str) -> str:
+        """`reread(kind, "operation")` の値の呼び名。知らない操作なら空文字。"""
+        return self.OPERATION_LABELS.get((kind, value), "")
 
 
 def check_parser(parser) -> None:

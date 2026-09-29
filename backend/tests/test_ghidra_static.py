@@ -300,8 +300,10 @@ def quizzes(lesson):
 class TestStaticLesson(unittest.TestCase):
     def test_all_three_kinds_are_generated_and_verified(self):
         facts, lesson = build()
-        kinds = {q["category"] for q in quizzes(lesson)}
-        self.assertEqual(kinds, {"static-string", "static-call", "static-external"})
+        kinds = {q["templateId"] for q in quizzes(lesson)}
+        self.assertLessEqual({"static.string-ref", "static.call", "static.external"}, kinds)
+        self.assertLessEqual({q["category"] for q in quizzes(lesson)},
+                             {"static-string", "static-call", "static-external", "static-limits"})
         for q in quizzes(lesson):
             with self.subTest(q=q["id"]):
                 self.assertTrue(sl.verify_quiz(facts, q))
@@ -321,7 +323,7 @@ class TestStaticLesson(unittest.TestCase):
         """
         facts, lesson = build()
         for q in quizzes(lesson):
-            if q["category"] != "static-string":
+            if q["templateId"] != "static.string-ref":
                 continue
             fn = q["answerCheck"]["function"]
             used = {facts.strings[r["string"]]["value"] for r in facts.string_refs
@@ -358,7 +360,7 @@ class TestStaticLesson(unittest.TestCase):
     def test_indirect_and_thunk_calls_are_not_asked_as_direct_calls(self):
         _, lesson = build()
         for q in quizzes(lesson):
-            if q["category"] == "static-call":
+            if q["templateId"] == "static.call":
                 self.assertNotEqual(q["answerCheck"]["from"], "ram:0000000000101240",
                                     "call through a thunk is not a direct call to a program function")
 

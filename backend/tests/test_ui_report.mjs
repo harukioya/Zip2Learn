@@ -51,11 +51,15 @@ class El {
     this._text = '';
     this.children = cs.map((c) => this._adopt(c));
   }
+  // 回答直後の ○・× は、時間が来ると remove() で自分を外す。
+  remove() { if (this.parent) this.parent.children = this.parent.children.filter((x) => x !== this); this.parent = null; }
   setAttribute(k, v) { this.attrs[k] = v; }
   addEventListener(t, f) { (this._on[t] || (this._on[t] = [])).push(f); }
   click() { return Promise.all((this._on.click || []).map((f) => f())); }
   focus(opts) { globalThis.__focused = this; globalThis.__focusOpts = opts; }
   scrollIntoView(opts) { globalThis.__scrolled = this; globalThis.__scrollOpts = opts; }
+  // 畳まれた飛び先を開くとき、evidence.js が親をたどる。
+  get parentNode() { return this.parent; }
   get isConnected() {
     let n = this;
     while (n) { if (n._root) return true; n = n.parent; }
@@ -218,10 +222,10 @@ async function playThrough(view, answers) {
   for (const pick of answers) {
     const options = view.cls('option');
     await options[pick].click();
-    const next = view.button(/次の設問へ/);
+    const next = view.button(/次の問題へ/);
     if (next) await next.click();
   }
-  const cont = view.button(/振り返りへ|次へ/);
+  const cont = view.button(/結果を見る|次の段階へ/);
   if (cont) await cont.click();
 }
 
@@ -242,6 +246,15 @@ await test('導入画面が出て、そこから調査を始められる', async
 
   await view.button(/調査を始める/).click();
   assert.ok(view.cls('option').length > 0, '調査が始まる');
+});
+
+await test('導入の設問数は、段階に載った設問（得点の母数）から数える', async () => {
+  const obj = lesson();
+  const total = obj.stages.reduce(
+    (n, s) => n + (Array.isArray(s.quizzes) && s.quizzes.length ? s.quizzes.length : (s.quiz ? 1 : 0)), 0);
+  assert.ok(total > 0);
+  const view = await open(obj);
+  assert.ok(view.textContent.includes(`設問の数${total} 問`), view.textContent);
 });
 
 await test('導入と最終レポートに、同じデータセット形式の 1 行が出る', async () => {
@@ -324,7 +337,7 @@ await test('回答後、視点は「設問 n/m」のある設問の先頭へ合�
   await answerFirst(view, 1);
   const panel = quizPanelOf(view);
   assert.ok(panel, '設問の区画がある');
-  assert.equal(labelOf(panel).textContent, '設問 1/2');
+  assert.equal(labelOf(panel).textContent, 'この段階の設問 1 / 2');
   assert.equal(globalThis.__scrolled, panel, '設問の区画へスクロールする');
   assert.equal(globalThis.__scrollOpts.block, 'start', '区画の先頭で止める');
 });
@@ -332,33 +345,33 @@ await test('回答後、視点は「設問 n/m」のある設問の先頭へ合�
 await test('回答後のフォーカス移動では、ページを動かさない', async () => {
   const view = await open(lesson());
   await answerFirst(view, 1);
-  // キーボード利用者のためにフォーカスは「次の設問へ」へ移す。ただし
+  // キーボード利用者のためにフォーカスは「次の問題へ」へ移す。ただし
   // それで最下部まで流されないよう、位置は動かさない指定にする。
-  assert.match(globalThis.__focused.textContent, /次の設問へ/);
+  assert.match(globalThis.__focused.textContent, /次の問題へ/);
   assert.deepEqual(globalThis.__focusOpts, { preventScroll: true });
 });
 
 await test('段階の最後の設問でも、視点は設問の先頭に残る', async () => {
   const view = await open(lesson());
   await answerFirst(view, 1);
-  await view.button(/次の設問へ/).click();
+  await view.button(/次の問題へ/).click();
   globalThis.__scrolled = null;
   await view.cls('option')[0].click();
   const panel = quizPanelOf(view);
-  assert.equal(labelOf(panel).textContent, '設問 2/2');
+  assert.equal(labelOf(panel).textContent, 'この段階の設問 2 / 2');
   assert.equal(globalThis.__scrolled, panel, '「次へ」へ流されない');
-  assert.match(globalThis.__focused.textContent, /次へ|振り返りへ/);
+  assert.match(globalThis.__focused.textContent, /次の段階へ|結果を見る/);
   assert.deepEqual(globalThis.__focusOpts, { preventScroll: true });
 });
 
-await test('「次の設問へ」で進んだときも、新しい設問の先頭を見せる', async () => {
+await test('「次の問題へ」で進んだときも、新しい設問の先頭を見せる', async () => {
   const view = await open(lesson());
   await answerFirst(view, 1);
   globalThis.__scrolled = null;
-  await view.button(/次の設問へ/).click();
+  await view.button(/次の問題へ/).click();
   const panel = quizPanelOf(view);
   assert.equal(globalThis.__scrolled, panel);
-  assert.equal(labelOf(panel).textContent, '設問 2/2');
+  assert.equal(labelOf(panel).textContent, 'この段階の設問 2 / 2');
 });
 
 // ---------------------------------------------------------------------------
@@ -432,7 +445,7 @@ await test('行を名指ししない設問（関連付け）には出さない',
   const view = await open(lesson());
   await view.button(/調査を始める/).click();
   await view.cls('option')[1].click();
-  await view.button(/次の設問へ/).click();
+  await view.button(/次の問題へ/).click();
   // 2 問目は関連付けの設問。問い文は行を名指ししていない。
   assert.match(view.textContent, /どちらが先に記録されましたか/);
   assert.equal(subjectButton(view), undefined);
@@ -451,7 +464,7 @@ const cardsIn = (box) => (box ? box.cls('evidence') : []);
 async function reachSecondQuiz(view) {
   await view.button(/調査を始める/).click();
   await view.cls('option')[1].click();
-  await view.button(/次の設問へ/).click();
+  await view.button(/次の問題へ/).click();
 }
 
 await test('関連付けの設問は、見比べる二つの記録を解答前に出す', async () => {
@@ -623,6 +636,24 @@ await test('未確定事項と追加調査が出る', async () => {
   assert.ok(text.includes('親プロセスを確認する'));
 });
 
+await test('成績の直下と末尾の両方から戻る・再挑戦できる', async () => {
+  const view = await open(lesson());
+  await playThrough(view, [1, 1]);
+  const actions = app.find((e) => e.tag === 'button' && e.textContent === 'もう一度').map((e) => e.parent);
+  assert.equal(actions.length, 2);
+  const siblings = actions[0].parent.children;
+  const above = siblings[siblings.indexOf(actions[0]) - 1];
+  assert.ok(above.textContent.includes('段階別・カテゴリ別の成績'), '成績の直下に置く');
+  assert.equal(siblings[siblings.length - 1], actions[1], '末尾にも残す');
+  for (const nav of actions) {
+    location.hash = '#/lesson/gen-test';
+    await nav.button(/^演習の一覧に戻る$/).click();
+    assert.equal(location.hash, '#/');
+    await nav.button(/^もう一度$/).click();
+    assert.equal(location.hash, `#/lesson/${lesson().id}`);
+  }
+});
+
 await test('間違えた問題だけが復習対象になる', async () => {
   const view = await open(lesson());
   await playThrough(view, [1, 1]);   // q1 正解 / q2 不正解
@@ -646,10 +677,10 @@ await test('復習ボタンで該当段階へ戻れ、得点が二重加算さ�
 
   // 戻って正解し直しても、同じ問題は数え直さない。
   await view.cls('option')[1].click();
-  const next = view.button(/次の設問へ/);
+  const next = view.button(/次の問題へ/);
   if (next) await next.click();
   await view.cls('option')[0].click();
-  await view.button(/振り返りへ|次へ/).click();
+  await view.button(/結果を見る|次の段階へ/).click();
   assert.equal(
     app.find((e) => e.tag === 'h1' && /正解/.test(e.textContent))[0].textContent,
     '正解 1 / 2',
@@ -662,7 +693,7 @@ await test('複数証拠の問題は両方の根拠を見せる', async () => {
   const start = view.button(/調査を始める/);
   await start.click();
   await view.cls('option')[1].click();
-  await view.button(/次の設問へ/).click();
+  await view.button(/次の問題へ/).click();
   await view.cls('option')[0].click();
   const jumps = view.find((e) => e.tag === 'button' && /根拠ログを見る/.test(e.textContent));
   assert.equal(jumps.length, 2, '2 件の根拠それぞれへ飛べる');
@@ -688,7 +719,7 @@ await test('ATT&CK ゼロ・時系列ゼロ・設問ゼロでも白画面にな�
   const view = await open(bare);
   await view.button(/調査を始める/).click();
   assert.ok(view.textContent.includes('根拠が不足'), '理由を説明する');
-  const cont = view.button(/振り返りへ|次へ/);
+  const cont = view.button(/結果を見る|次の段階へ/);
   assert.ok(cont, '設問ゼロでも先へ進める');
   await cont.click();
   const text = app.textContent;
@@ -700,7 +731,7 @@ await test('ATT&CK ゼロ・時系列ゼロ・設問ゼロでも白画面にな�
 await test('旧形式の recap.chain も表示できる', async () => {
   const view = await open(oldLesson());
   await view.cls('option')[0].click();
-  await view.button(/振り返りへ|次へ/).click();
+  await view.button(/結果を見る|次の段階へ/).click();
   const text = app.textContent;
   assert.ok(app.cls('kc-step').length > 0, 'キルチェーンが出る');
   assert.ok(text.includes('旧形式のまとめ'), 'summary');
@@ -712,10 +743,10 @@ await test('レポートの任意フィールドが欠けても落ちない', as
   const view = await open(broken);
   assert.ok(view.cls('option').length > 0, '導入なしで始まる');
   await view.cls('option')[1].click();
-  const next = view.button(/次の設問へ/);
+  const next = view.button(/次の問題へ/);
   if (next) await next.click();
   await view.cls('option')[0].click();
-  await view.button(/振り返りへ|次へ/).click();
+  await view.button(/結果を見る|次の段階へ/).click();
   assert.ok(app.button(/演習の一覧に戻る/), 'レポートが描ける');
 });
 
@@ -873,7 +904,7 @@ await test('段階の設問が別の記録を指していても、飛び先が�
 
   // 2 件目を指すのは 2 問目（突き合わせ）のほう。そこまで進める。
   await view.cls('option')[1].click();
-  await view.button(/次の設問へ/).click();
+  await view.button(/次の問題へ/).click();
   await view.cls('option')[0].click();
   const btn = jumpsIn(view).find((e) => /8 行目/.test(e.textContent));
   assert.ok(btn, '2 件目へのボタンが無い');
@@ -908,6 +939,108 @@ await test('新しい学習カテゴリが日本語で出る', async () => {
   const text = app.textContent;
   assert.ok(text.includes('断定できない理由を説明する'), text.slice(0, 200));
   assert.ok(!text.includes('limits'), '内部のキーがそのまま出ている');
+});
+
+// ---------------------------------------------------------------------------
+// 一覧の「続きを読む」
+//
+// 記録された順序・間違えた問題・判断の根拠になった記録は、1 件目だけを
+// 見せ、残りは開いて読む。開くと上のボタンが「閉じる」に変わり、
+// 最後の項目の下にも「閉じる」が出る。
+// ---------------------------------------------------------------------------
+const sectionOf = (title) =>
+  app.find((e) => e.tag === 'section' && e.children[0] && e.children[0].textContent === title)[0];
+const foldParts = (box) => ({
+  toggle: box.cls('fold-toggle').find((b) => !b.parent || !String(b.parent.className).includes('fold-end')),
+  rest: box.cls('fold-rest')[0],
+  close: box.cls('fold-end')[0] && box.cls('fold-end')[0].cls('fold-toggle')[0],
+});
+
+await test('記録された順序は 1 件目だけを見せ、続きを読むで開閉できる', async () => {
+  const view = await open(lesson());
+  await playThrough(view, [1, 0]);
+  const box = sectionOf('記録された順序');
+  const { toggle, rest, close } = foldParts(box);
+  assert.ok(box.textContent.includes('一方が他方を引き起こした'), '説明は常に見える');
+  const lists = box.find((e) => e.tag === 'ol');
+  assert.ok(!lists[0].parent.className.includes('fold-rest'), '1 件目は畳まれない側にある');
+  assert.ok(lists[0].textContent.includes('cmd.exe を起動'), '1 件目');
+  assert.ok(rest.hidden, '2 件目以降は閉じている');
+  assert.ok(rest.textContent.includes('x.dat に書き込み'));
+  assert.equal(rest.find((e) => e.tag === 'ol')[0].attrs.start, '2', '番号は 2 から続く');
+  assert.equal(toggle.textContent, '続きを読む（残り 1 件）');
+  assert.equal(toggle.attrs['aria-expanded'], 'false');
+  assert.equal(toggle.attrs['aria-controls'], rest.id);
+
+  await toggle.click();
+  assert.equal(rest.hidden, false, '開く');
+  assert.equal(toggle.textContent, '閉じる', '上のボタンは閉じるに変わる');
+  assert.equal(toggle.attrs['aria-expanded'], 'true');
+  assert.ok(close && close.textContent === '閉じる', '最後の項目の下にも閉じる');
+  assert.equal(rest.children.at(-1), close.parent, '閉じるは続きの一番下');
+
+  await toggle.click();
+  assert.ok(rest.hidden, '上の閉じるで畳む');
+  await toggle.click();
+  globalThis.__focused = null;
+  await close.click();
+  assert.ok(rest.hidden, '下の閉じるで畳む');
+  assert.equal(toggle.textContent, '続きを読む（残り 1 件）');
+  assert.equal(globalThis.__focused, toggle, '畳んだら上のボタンへ戻る');
+});
+
+await test('間違えた問題も畳み、断定できなかったこと・次に調べるとよいことは全件を出す', async () => {
+  const obj = lesson();
+  obj.stages[0].quizzes.push({ ...obj.stages[0].quizzes[0], id: 'q3', q: '問い3' });
+  const view = await open(obj);
+  await playThrough(view, [0, 1, 0]);             // 3 問とも不正解
+  const unknown = sectionOf('断定できなかったこと');
+  assert.equal(unknown.cls('fold-toggle').length, 0, '断定できなかったことは畳まない');
+  assert.equal(unknown.cls('fold-rest').length, 0);
+  assert.equal(unknown.cls('unknown').length, 2, '全件を出す');
+  assert.ok(unknown.textContent.includes('読み取りの打ち切り'));
+
+  const wrong = sectionOf('間違えた問題');
+  const parts = foldParts(wrong);
+  assert.equal(wrong.cls('review').length, 3);
+  assert.equal(parts.rest.cls('review').length, 2, '2 件目以降を畳む');
+  assert.equal(parts.toggle.textContent, '続きを読む（残り 2 件）');
+  assert.ok(parts.rest.hidden);
+
+  const next = sectionOf('次に調べるとよいこと');
+  assert.equal(next.cls('fold-toggle').length, 0, '次に調べるとよいことは畳まない');
+  assert.equal(next.cls('fold-rest').length, 0);
+});
+
+await test('1 件だけの一覧には続きを読むを出さない', async () => {
+  const view = await open(lesson());
+  await playThrough(view, [1, 1]);                // 間違いは 1 問だけ
+  const wrong = sectionOf('間違えた問題');
+  assert.equal(wrong.cls('review').length, 1);
+  assert.equal(wrong.cls('fold-toggle').length, 0);
+});
+
+await test('判断の根拠になった記録も畳み、畳まれたカードへのジャンプでは先に開く', async () => {
+  const view = await open(lesson());
+  await playThrough(view, [1, 0]);
+  const box = sectionOf('判断の根拠になった記録');
+  const { toggle, rest } = foldParts(box);
+  assert.ok(box.textContent.includes('すべてこの一覧の記録を指しています'), '説明は常に見える');
+  assert.equal(box.cls('evidence').length, 2);
+  assert.equal(rest.cls('evidence').length, 1, '2 枚目を畳む');
+  assert.ok(rest.hidden);
+  assert.equal(toggle.textContent, '続きを読む（残り 1 件）');
+  assert.ok(String(toggle.className).includes('btn-primary'), '青い背景・白い文字のボタン');
+  assert.equal(rest.find((e) => e.attrs.start).length, 0, '番号の無い一覧に start を付けない');
+
+  // 時系列の 2 行目のボタンは、畳まれた 2 枚目（8 行目）を指す。
+  const jump = jumpsIn(app).find((b) => /8 行目/.test(b.textContent));
+  globalThis.__focused = null;
+  await jump.click();
+  assert.equal(rest.hidden, false, '飛び先を含む続きが開く');
+  assert.equal(toggle.textContent, '閉じる');
+  assert.equal(toggle.attrs['aria-expanded'], 'true');
+  assert.equal(globalThis.__focused.id, `ev-report-${EV_B}`, '開いたカードへフォーカス');
 });
 
 // ---------------------------------------------------------------------------

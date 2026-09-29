@@ -1362,6 +1362,7 @@ class Handler(ghidra_api.GhidraHandlers, BaseHTTPRequestHandler):
         return {
             "id": lesson["id"], "title": lesson["title"],
             "stages": len(lesson["stages"]),
+            "questions": sum(len(s["quizzes"]) for s in lesson["stages"]),
             "events": sum(len(s["events"]) for s in lesson["stages"]),
             "tagged": sum(
                 1 for s in lesson["stages"] for e in s["events"] if "attck" in e

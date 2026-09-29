@@ -234,7 +234,8 @@ class TestCorrelationQuestion(unittest.TestCase):
     def setUp(self):
         self.lesson = build()
         self.quizzes = [q for s in self.lesson["stages"] for q in s["quizzes"]]
-        self.corr = [q for q in self.quizzes if q.get("category") == "correlation"]
+        self.corr = [q for q in self.quizzes
+                     if q.get("templateId") == "log.correlation.order"]
 
     def test_one_is_generated_from_sufficient_data(self):
         self.assertEqual(len(self.corr), 1, [q["id"] for q in self.quizzes])
@@ -1383,7 +1384,7 @@ class TestCorrelationSearchesEveryEvent(unittest.TestCase):
         lesson = build_lesson("t", {ENDPOINT: text}, "gen-dedup")
         self.assertIsNotNone(lesson)
         corr = [q for s in lesson["stages"] for q in s["quizzes"]
-                if q["category"] == "correlation"]
+                if q.get("templateId") == "log.correlation.order"]
         self.assertEqual(len(corr), 1,
                          "間引かれた 2 回目の起動が相関に使われていない")
         self.assertEqual(corr[0]["correlation"]["gapSeconds"], 10.0)
@@ -1420,7 +1421,7 @@ class TestCorrelationSearchesEveryEvent(unittest.TestCase):
         self.assertLessEqual(len(stage["events"]), explain.STAGE_EVENTS,
                              "前提が崩れている: 一覧が切られていない")
         corr = [q for s in lesson["stages"] for q in s["quizzes"]
-                if q["category"] == "correlation"]
+                if q.get("templateId") == "log.correlation.order"]
         self.assertEqual(len(corr), 1, "一覧の外にある組を見落としている")
         self.assertEqual(corr[0]["correlation"]["gapSeconds"], 15.0)
 
@@ -1822,12 +1823,13 @@ class TestCorrelationDoesNotMaterialiseEveryRecord(unittest.TestCase):
         finally:
             explain._lesson_event = real
         self.assertIsNotNone(lesson)
-        # 作ってよいのは、間引いたあとの一覧と、相関に採用した 2 件だけ。
-        # 一覧は起動 21 種（cmd.exe と p0〜p19）とファイル 1 件で 22。
-        # 合わせて 24 が上限で、2002 行に対して定数のままであること。
+        # 作ってよいのは、間引いたあとの一覧と、相関に採用した組だけ。組は
+        # 前後の設問と時間差の設問で最大 2 組（4 件）。一覧は起動 21 種
+        # （cmd.exe と p0〜p19）とファイル 1 件で 22。合わせて 26 が上限で、
+        # 2002 行に対して定数のままであること。
         distinct = 22
         self.assertLessEqual(
-            len(calls), distinct + 2,
+            len(calls), distinct + 4,
             f"{len(calls)} 回作っている（2002 行、一覧は {distinct} 件）")
 
     def test_host_key_sets_are_shared_between_records(self):

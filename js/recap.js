@@ -18,6 +18,9 @@ import {
 import { glossary, staticGlossary } from './intro.js';
 import { profileLine, profileOfLesson } from './profile.js';
 import { el } from './dom.js';
+import { clearMotion, countUp, reducedMotion } from './motion.js';
+
+let foldSeq = 0;
 
 const STATUS_LABEL = {
   observed: '観測された事実',
@@ -34,6 +37,7 @@ const CATEGORY_LABEL = {
   'static-string': '命令が参照する文字列を読む',
   'static-call': '直接呼び出しの行き先を読む',
   'static-external': '外部関数を見分ける',
+  'static-limits': '記録から言えないことを分ける',
 };
 
 // このレポート画面の id 空間。演習の段階とは別に持つ。レポートは mount を
@@ -49,6 +53,92 @@ function section(title, build) {
   return filled === false ? null : box;
 }
 
+/** 成績の直下とレポート末尾に、同じ操作を独立したボタンとして置く。 */
+function resultNav(lesson, nearScores = false) {
+  const nav = el('div', nearScores ? 'navbtns navbtns--wrap recap__actions' : 'navbtns');
+  const back = el('button', 'btn btn-ghost', '演習の一覧に戻る');
+  back.type = 'button';
+  back.setAttribute('aria-label', '演習の一覧に戻る');
+  back.addEventListener('click', () => { location.hash = '#/'; });
+  const replay = el('button', 'btn btn-primary', 'もう一度');
+  replay.type = 'button';
+  replay.setAttribute('aria-label', 'この演習を最初からやり直す');
+  replay.addEventListener('click', () => {
+    // 初回の成績も含めて、演習を最初からやり直す。
+    const target = `#/lesson/${lesson.id}`;
+    if (location.hash === target) {
+      window.dispatchEvent(new HashChangeEvent('hashchange'));
+    } else {
+      location.hash = target;
+    }
+  });
+  nav.append(back, replay);
+  return nav;
+}
+
+/**
+ * 一覧の 1 件目だけを見せ、残りは「続きを読む」で開く。
+ *
+ * レポートは長く、どの区画も全件を並べると先の区画へたどり着けない。1 件目で
+ * 何が書いてあるかを示し、続きは読みたい人が開く。開くと上のボタンは
+ * 「閉じる」に変わり、最後の項目の下にも「閉じる」を置く（長い一覧を読み
+ * 終えた位置から戻れるように）。
+ *
+ * `makeList` は項目を入れる器（ol / ul / div）を作る。null なら区画へ直接並べる。
+ * `numbered` の一覧（ol）は、続きの器を 2 から数え始める。
+ *
+ * 続きの器には `revealFold()` を持たせる。レポート内の「根拠ログを見る」は、
+ * 飛び先のカードが畳まれていればこれで開いてから移動する（evidence.js）。
+ */
+function foldList(box, items, makeList, numbered = false) {
+  const into = (target, nodes, start) => {
+    if (!makeList) {
+      target.append(...nodes);
+      return;
+    }
+    const list = makeList();
+    if (numbered && start > 1) list.setAttribute('start', String(start));
+    list.append(...nodes);
+    target.append(list);
+  };
+  into(box, items.slice(0, 1), 1);
+  if (items.length <= 1) return;
+
+  const rest = el('div', 'fold-rest');
+  rest.id = `fold-rest-${++foldSeq}`;
+  rest.hidden = true;
+  into(rest, items.slice(1), 2);
+
+  const moreLabel = `続きを読む（残り ${items.length - 1} 件）`;
+  const toggle = el('button', 'btn btn-primary fold-toggle', moreLabel);
+  toggle.type = 'button';
+  toggle.setAttribute('aria-controls', rest.id);
+  toggle.setAttribute('aria-expanded', 'false');
+
+  const close = el('button', 'btn btn-primary fold-toggle', '閉じる');
+  close.type = 'button';
+  close.setAttribute('aria-controls', rest.id);
+  const closeNav = el('div', 'fold-end');
+  closeNav.append(close);
+  rest.append(closeNav);
+
+  const setOpen = (open) => {
+    rest.hidden = !open;
+    toggle.textContent = open ? '閉じる' : moreLabel;
+    toggle.setAttribute('aria-expanded', String(open));
+  };
+  rest.revealFold = () => setOpen(true);
+  toggle.addEventListener('click', () => setOpen(rest.hidden));
+  close.addEventListener('click', () => {
+    setOpen(false);
+    // 下の「閉じる」で畳むと、読んでいた位置の中身が消える。上のボタンまで
+    // 戻し、そこへフォーカスを移す。
+    toggle.scrollIntoView({ block: 'nearest', behavior: reducedMotion() ? 'auto' : 'smooth' });
+    toggle.focus({ preventScroll: true });
+  });
+  box.append(toggle, rest);
+}
+
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
 /**
@@ -56,16 +146,16 @@ const SVG_NS = 'http://www.w3.org/2000/svg';
  *
  * 伸びる動きは CSS の keyframes（`from` だけを書く）で付ける。終点は
  * `stroke-dashoffset` 属性に置いた値で、アニメーションが終わるとそこへ
- * 落ち着く。JS でタイマーを回さないので、動きを減らす設定の利用者には
- * CSS 側で止めるだけで済む。
+ * 落ち着く。中央の % は同じ時間で 0 から数え上げる（motion.js）。どちらも
+ * 見た目だけで、動きを減らす設定や `animate` が偽のときは最終値で止まって出る。
  *
  * 数字は見出しの「正解 X / Y」と同じ値から出す。読み上げでは円は 1 枚の
- * 画像として「正答率 N%」とだけ伝え、中の図形は読ませない。
+ * 画像として「正答率 N%」とだけ伝え、中の図形も数え上げの途中も読ませない。
  */
-function scoreRing(correct, total) {
+function scoreRing(correct, total, animate) {
   const pct = total > 0 ? Math.round((correct / total) * 100) : 0;
 
-  const wrap = el('div', 'ring');
+  const wrap = el('div', animate ? 'ring' : 'ring is-still');
   wrap.setAttribute('role', 'img');
   wrap.setAttribute('aria-label', `正答率 ${pct}%`);
 
@@ -93,8 +183,16 @@ function scoreRing(correct, total) {
     svg.append(bar);
   }
   wrap.append(svg);
-  wrap.append(el('span', 'ring__label', `${pct}%`));
-  return wrap;
+  const label = el('span', 'ring__label', `${pct}%`);
+  label.setAttribute('aria-hidden', 'true');
+  wrap.append(label);
+  return { wrap, start: () => { if (animate) countUp(label, pct, (n) => `${n}%`); } };
+}
+
+/** 結果の上に出す完了の一言。0 問の演習は「全問正解」と扱わない。 */
+function doneMessage(correct, total) {
+  if (total <= 0) return ['記録の確認が完了しました'];
+  return [correct >= total ? '全問正解！ ' : '演習完了！ ', 'おつかれさまでした'];
 }
 
 /**
@@ -103,6 +201,7 @@ function scoreRing(correct, total) {
  * @param {{correct:number,total:number,answers?:Array,goToStage?:Function}} stats
  */
 export function renderRecap(mount, lesson, stats) {
+  clearMotion();
   const recap = lesson.recap || {};
   const report = lesson.report || {};
   const evidence = evidenceMap(lesson);
@@ -110,6 +209,9 @@ export function renderRecap(mount, lesson, stats) {
   const total = Number(stats && stats.total) || 0;
   const answers = (stats && stats.answers) || [];
   const goToStage = stats && stats.goToStage;
+  // 完了の演出（数え上げ・弧・一言の出方）は最初の 1 回だけ。復習から
+  // 戻ったときは最終値のまま出す。
+  const animate = !!(stats && stats.animate) && !reducedMotion();
   // 静的解析の教材には時系列が無い。記録の順序や ATT&CK の代わりに、静的に
   // 確かめられた事実と、実行しないと分からないことを並べる。
   const staticLesson = lesson.kind === 'static';
@@ -118,14 +220,41 @@ export function renderRecap(mount, lesson, stats) {
   const root = document.createElement('section');
   root.className = 'recap';
 
-  // ---- 得点 ----
+  // ---- 完了の一言と得点 ----
+  // 句ごとに分けて並べる。狭い画面では「！」の後で折り返し、語の途中で切れない。
+  const done = el('p', animate ? 'recap__done is-animated' : 'recap__done');
+  doneMessage(correct, total).forEach((t) => done.append(el('span', 'recap__done-part', t)));
+  root.appendChild(done);
   root.appendChild(el('p', 'eyebrow', '調査レポート'));
+  // 復習で解き直しても、ここは初回の回答のまま。そう書いておく。
+  if (total > 0) {
+    root.appendChild(
+      el('p', 'recap__first muted', '初回の成績（復習で解き直した回答は含みません）')
+    );
+  }
   const scoreRow = el('div', 'recap__score');
   const heading = document.createElement('h1');
   heading.textContent = `正解 ${correct} / ${total}`;
   heading.tabIndex = -1;
-  scoreRow.append(heading, scoreRing(correct, total));
+  const ring = scoreRing(correct, total, animate);
+  scoreRow.append(heading, ring.wrap);
   root.appendChild(scoreRow);
+
+  // 間違いがあれば、下の「間違えた問題」へすぐ移れるようにする。
+  const wrong = answers.filter((a) => !a.correct);
+  let wrongBox = null;
+  if (wrong.length) {
+    const toReview = el('button', 'btn btn-ghost btn-sm recap__review', '間違えた問題を復習する');
+    toReview.type = 'button';
+    toReview.addEventListener('click', () => {
+      if (!wrongBox) return;
+      wrongBox.scrollIntoView({ block: 'start', behavior: reducedMotion() ? 'auto' : 'smooth' });
+      wrongBox.focus({ preventScroll: true });
+    });
+    const reviewNav = el('div', 'navbtns navbtns--wrap');
+    reviewNav.append(toReview);
+    root.appendChild(reviewNav);
+  }
 
   // どのデータセット形式として読んだ教材か。データセット画面・導入画面と
   // 同じ 1 行を出す。レポートだけを見た人にも、分類の前提が分かるように。
@@ -168,6 +297,7 @@ export function renderRecap(mount, lesson, stats) {
     });
     root.appendChild(scores);
   }
+  root.appendChild(resultNav(lesson, true));
 
   // ---- 観測された時系列 ----
   const timeline = Array.isArray(report.timeline) ? report.timeline : [];
@@ -183,16 +313,15 @@ export function renderRecap(mount, lesson, stats) {
           box.append(el('p', 'muted', '示せる事実がありませんでした。'));
           return;
         }
-        const list = el('ol', 'timeline');
-        staticFacts.forEach((row) => {
+        const items = staticFacts.map((row) => {
           const item = el('li', 'timeline__row');
           item.append(el('span', 'timeline__status', CATEGORY_LABEL[row.category] || ''));
           item.append(el('span', 'timeline__title', visible(row.title || '')));
           const jump = jumpButtons(row.evidenceIds, evidence, SCOPE, '根拠の記録を見る');
           if (jump) item.append(jump);
-          list.append(item);
+          return item;
         });
-        box.append(list);
+        foldList(box, items, () => el('ol', 'timeline'), true);
       })
     );
   }
@@ -207,7 +336,7 @@ export function renderRecap(mount, lesson, stats) {
         box.append(el('p', 'muted', '時刻を読み取れた記録がありませんでした。'));
         return;
       }
-      const list = el('ol', 'timeline');
+      const items = [];
       timeline.forEach((row) => {
         const item = el('li', 'timeline__row');
         const when = el('span', 'timeline__time mono',
@@ -236,9 +365,9 @@ export function renderRecap(mount, lesson, stats) {
         );
         const jump = jumpButtons(row.evidenceIds, evidence, SCOPE);
         if (jump) item.append(jump);
-        list.append(item);
+        items.push(item);
       });
-      box.append(list);
+      foldList(box, items, () => el('ol', 'timeline'), true);
     })
   );
 
@@ -272,9 +401,8 @@ export function renderRecap(mount, lesson, stats) {
               ? 'このレポートの「根拠の記録を見る」は、すべてこの一覧の記録を指しています。'
               : 'このレポートの「根拠ログを見る」は、すべてこの一覧の記録を指しています。')
         );
-        const list = el('div', 'evidence-list');
-        keyIds.forEach((i) => list.append(evidenceCard(evidence[i], null, true, SCOPE)));
-        box.append(list);
+        const cards = keyIds.map((i) => evidenceCard(evidence[i], null, true, SCOPE));
+        foldList(box, cards, () => el('div', 'evidence-list'));
       })
     );
   }
@@ -348,57 +476,62 @@ export function renderRecap(mount, lesson, stats) {
   }
 
   // ---- 間違えた問題と復習 ----
-  const wrong = answers.filter((a) => !a.correct);
-  root.appendChild(
-    section('間違えた問題', (box) => {
-      if (!answers.length) {
-        box.append(el('p', 'muted', '回答の記録がありません。'));
-        return;
-      }
-      if (!wrong.length) {
-        box.append(el('p', 'muted', '間違えた問題はありません。'));
-        return;
-      }
-      wrong.forEach((a) => {
-        const row = el('div', 'review');
-        row.append(
-          el('div', 'review__q',
-            visible((a.quiz && (a.quiz.q || a.quiz.prompt)) || a.questionId))
-        );
-        row.append(
-          el('p', 'muted',
-            `${visible(a.stageName || '')}／${CATEGORY_LABEL[a.category] || a.category}`)
-        );
-        // 根拠をその場で再表示する。戻らなくても確かめられるようにする。
-        const cited = citedEvidence(a.evidenceIds, evidence);
-        if (cited) row.append(cited);
+  wrongBox = section('間違えた問題', (box) => {
+    if (!answers.length) {
+      box.append(el('p', 'muted', '回答の記録がありません。'));
+      return;
+    }
+    if (!wrong.length) {
+      box.append(el('p', 'muted', '間違えた問題はありません。'));
+      return;
+    }
+    const rows = wrong.map((a) => {
+      const row = el('div', 'review');
+      row.append(
+        el('div', 'review__q',
+          visible((a.quiz && (a.quiz.q || a.quiz.prompt)) || a.questionId))
+      );
+      row.append(
+        el('p', 'muted',
+          `${visible(a.stageName || '')}／${CATEGORY_LABEL[a.category] || a.category}`)
+      );
+      // 根拠をその場で再表示する。戻らなくても確かめられるようにする。
+      const cited = citedEvidence(a.evidenceIds, evidence);
+      if (cited) row.append(cited);
 
-        const nav = el('div', 'navbtns navbtns--wrap');
-        if (goToStage && a.stageId) {
-          const back = el('button', 'btn btn-ghost btn-sm', 'この段階へ戻って解き直す');
-          back.type = 'button';
-          back.addEventListener('click', () => goToStage(a.stageId));
-          nav.append(back);
-        }
-        const jump = jumpButtons(
-          a.evidenceIds, evidence, SCOPE,
-          staticLesson ? '根拠の記録を見る' : '根拠ログを見る'
-        );
-        if (jump) nav.append(...jump.children);
-        if (nav.children.length) row.append(nav);
-        box.append(row);
-      });
-    })
-  );
+      const nav = el('div', 'navbtns navbtns--wrap');
+      if (goToStage && a.stageId) {
+        const back = el('button', 'btn btn-ghost btn-sm', 'この段階へ戻って解き直す');
+        back.type = 'button';
+        back.addEventListener('click', () => goToStage(a.stageId));
+        nav.append(back);
+      }
+      const jump = jumpButtons(
+        a.evidenceIds, evidence, SCOPE,
+        staticLesson ? '根拠の記録を見る' : '根拠ログを見る'
+      );
+      if (jump) nav.append(...jump.children);
+      if (nav.children.length) row.append(nav);
+      return row;
+    });
+    foldList(box, rows, null);
+  });
+  // 「間違えた問題を復習する」の移動先。
+  wrongBox.tabIndex = -1;
+  wrongBox.classList.add('recap__wrong');
+  root.appendChild(wrongBox);
 
   // ---- 未確定事項 ----
   const unknowns = Array.isArray(report.unknowns) ? report.unknowns : [];
   if (unknowns.length) {
     root.appendChild(
       section('断定できなかったこと', (box) => {
+        // 件数が少なく、どれも結論の限界を示すので畳まずに全件を出す。
         unknowns.forEach((u) => {
-          box.append(el('div', 'unknown__topic', visible(u.topic || '')));
-          box.append(el('p', 'unknown__detail', visible(u.detail || '')));
+          const item = el('div', 'unknown');
+          item.append(el('div', 'unknown__topic', visible(u.topic || '')));
+          item.append(el('p', 'unknown__detail', visible(u.detail || '')));
+          box.append(item);
         });
       })
     );
@@ -409,6 +542,7 @@ export function renderRecap(mount, lesson, stats) {
   if (next.length) {
     root.appendChild(
       section('次に調べるとよいこと', (box) => {
+        // 短い一行ずつなので、畳まずに全件を出す。
         const ul = el('ul', 'bullets');
         next.forEach((t) => ul.append(el('li', null, visible(t))));
         box.append(ul);
@@ -428,32 +562,9 @@ export function renderRecap(mount, lesson, stats) {
   }
 
   // ---- 導線 ----
-  const nav = el('div', 'navbtns');
-  const back = el('button', 'btn btn-ghost', '演習の一覧に戻る');
-  back.type = 'button';
-  back.setAttribute('aria-label', '演習の一覧に戻る');
-  back.addEventListener('click', () => {
-    location.hash = '#/';
-  });
-  nav.appendChild(back);
-
-  const replay = document.createElement('button');
-  replay.type = 'button';
-  replay.className = 'btn btn-primary';
-  replay.textContent = 'もう一度';
-  replay.setAttribute('aria-label', 'この演習を最初からやり直す');
-  replay.addEventListener('click', () => {
-    // 演習を作り直すので、得点も回答履歴もここで捨てられる。
-    const target = `#/lesson/${lesson.id}`;
-    if (location.hash === target) {
-      window.dispatchEvent(new HashChangeEvent('hashchange'));
-    } else {
-      location.hash = target;
-    }
-  });
-  nav.appendChild(replay);
-  root.appendChild(nav);
+  root.appendChild(resultNav(lesson));
 
   mount.replaceChildren(root);
   heading.focus({ preventScroll: true });
+  ring.start();
 }

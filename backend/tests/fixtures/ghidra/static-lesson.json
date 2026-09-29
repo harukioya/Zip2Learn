@@ -71,6 +71,20 @@
     "reference": "関数の入口（このプログラム内）"
    }
   },
+  "ev-5feb0fb9e29999fafd0af78d": {
+   "confidence": "stored",
+   "evidenceType": "static",
+   "id": "ev-5feb0fb9e29999fafd0af78d",
+   "kind": "instruction",
+   "source": {
+    "address": "ram:00101210",
+    "excerpt": "LEA RDI,[0x00102000]",
+    "function": "main",
+    "instruction": "LEA RDI,[0x00102000]",
+    "program": "minigame",
+    "reference": "参照先: ram:00102000"
+   }
+  },
   "ev-6c319c62f978ea504760f580": {
    "confidence": "stored",
    "evidenceType": "static",
@@ -169,6 +183,34 @@
     "reference": "定義済み文字列（9 文字）"
    }
   },
+  "ev-d465b5b6d26b93a729e303c1": {
+   "confidence": "stored",
+   "evidenceType": "static",
+   "id": "ev-d465b5b6d26b93a729e303c1",
+   "kind": "instruction",
+   "source": {
+    "address": "ram:001011a0",
+    "excerpt": "CALL 0x00101180",
+    "function": "draw",
+    "instruction": "CALL 0x00101180",
+    "program": "minigame",
+    "reference": "呼び出し先: ram:00101180"
+   }
+  },
+  "ev-dc718ef42cd07f6cb3f5554e": {
+   "confidence": "stored",
+   "evidenceType": "static",
+   "id": "ev-dc718ef42cd07f6cb3f5554e",
+   "kind": "instruction",
+   "source": {
+    "address": "ram:00101185",
+    "excerpt": "LEA RDI,[0x00102030]",
+    "function": "print_usage",
+    "instruction": "LEA RDI,[0x00102030]",
+    "program": "minigame",
+    "reference": "参照先: ram:00102030"
+   }
+  },
   "ev-e1c370c8a35e83f2f69f9805": {
    "confidence": "stored",
    "evidenceType": "static",
@@ -195,6 +237,20 @@
     "instruction": null,
     "program": "minigame",
     "reference": "関数の入口（このプログラム内）"
+   }
+  },
+  "ev-ee4f534e0cd3d6b112125182": {
+   "confidence": "stored",
+   "evidenceType": "static",
+   "id": "ev-ee4f534e0cd3d6b112125182",
+   "kind": "instruction",
+   "source": {
+    "address": "ram:00101195",
+    "excerpt": "LEA RDI,[0x00102050]",
+    "function": "draw",
+    "instruction": "LEA RDI,[0x00102050]",
+    "program": "minigame",
+    "reference": "参照先: ram:00102050"
    }
   },
   "ev-f32aea0b75fa791603f939c7": {
@@ -227,13 +283,18 @@
   }
  },
  "family": "静的解析",
+ "generator": {
+  "quizTemplates": "quiz-templates/2"
+ },
  "id": "gen-gzf-abababababababab",
  "introduction": {
-  "estimatedMinutes": 15,
+  "estimatedMinutes": 21,
   "kind": "static",
   "objectives": [
    "命令が参照するアドレスを、定義済み文字列の記録と突き合わせる",
+   "文字列のアドレスから、それを参照する命令と関数をたどる",
    "呼び出し命令の行き先を、関数の入口アドレスから特定する",
+   "関数の入口から、そこへの直接呼び出し命令を持つ関数をたどる",
    "プログラム内の関数と、外部関数の記録を見分ける",
    "記録から言えることと、実行しないと分からないことを分ける"
   ],
@@ -265,13 +326,24 @@
     "storedExecutableSha256": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
    },
    "questionCounts": {
-    "call": 2,
+    "call": 3,
     "external": 1,
-    "string": 2
+    "limits": 1,
+    "string": 3
    },
    "sample": null,
    "schemaVersion": "zip2learn-ghidra-static/1",
-   "skipped": [],
+   "skipped": [
+    "外部関数の登録先: 登録先（ライブラリ名）が保存されている外部関数の登録先が 2 種類しかなく、選択肢を 4 つ作れませんでした。空欄や不明（<EXTERNAL>）はライブラリ名として扱っていません。"
+   ],
+   "templateCounts": {
+    "static.call": 2,
+    "static.caller": 1,
+    "static.external": 1,
+    "static.limits": 1,
+    "static.string-ref": 2,
+    "static.string-referrer": 1
+   },
    "tool": {
     "arch": "arm64",
     "ghidraVersion": "12.1.4",
@@ -286,7 +358,7 @@
  },
  "kind": "static",
  "recap": {
-  "summary": "minigame の保存済み解析情報から、文字列の参照 2 問、直接呼び出し 2 問、外部関数 1 問を解きました。どれも静的に確認できる記録の読み方で、実行時の挙動は含みません。"
+  "summary": "minigame の保存済み解析情報から、文字列の参照 3 問、直接呼び出し 3 問、外部関数 1 問、記録から言えないことの区別 1 問の計 8 問を解きました。どれも静的に確認できる記録の読み方で、実行時の挙動は含みません。"
  },
  "report": {
   "facts": [
@@ -307,6 +379,14 @@
     "title": "ram:00101110 の命令「LEA RDI,[0x00102020]」には、Ghidra が保存した参照（種類 DATA）があり、参照先は ram:00102020 です。このアドレスに定義されている文字列は 「Board ready」 です。"
    },
    {
+    "category": "static-string",
+    "evidenceIds": [
+     "ev-ba081b8c8769da898fc51b97",
+     "ev-ee4f534e0cd3d6b112125182"
+    ],
+    "title": "ram:00101195 の命令「LEA RDI,[0x00102050]」の参照先は ram:00102050 で、この命令は関数 draw @ ram:00101190 の中にあります。"
+   },
+   {
     "category": "static-call",
     "evidenceIds": [
      "ev-93109eaac411b02544fa0faa",
@@ -323,11 +403,27 @@
     "title": "ram:00101120 の命令「CALL 0x00101150」の呼び出し先は ram:00101150 です。この入口アドレスを持つ関数は place_mines です。"
    },
    {
+    "category": "static-call",
+    "evidenceIds": [
+     "ev-f7a356b61d69d53736e6896f",
+     "ev-05469bb80490510142b8d42e"
+    ],
+    "title": "ram:00101120 の命令「CALL 0x00101150」の呼び出し先は ram:00101150 で、place_mines の入口と一致します。この命令は関数 init_board @ ram:00101100 の中にあります。"
+   },
+   {
     "category": "static-external",
     "evidenceIds": [
      "ev-8c8c12bd147b23a51ae1dbe7"
     ],
     "title": "rand は EXTERNAL:00000018（EXTERNAL 空間）に外部関数として登録されており、登録先のライブラリは libc.so.6 です。ほかの選択肢は、このプログラムのメモリ上に入口を持つ関数です。"
+   },
+   {
+    "category": "static-limits",
+    "evidenceIds": [
+     "ev-d465b5b6d26b93a729e303c1",
+     "ev-e1c370c8a35e83f2f69f9805"
+    ],
+    "title": "「この呼び出しが、実行時に実際に行われた」は、この記録のどの欄にも書かれていません。ほかの選択肢は、下の記録の関数・アドレス・命令・参照先の欄で確かめられる事実です。"
    }
   ],
   "nextInvestigations": [
@@ -353,8 +449,44 @@
    {
     "detail": "記録は GZF を保存した時点の Ghidra の解析結果です。自動解析はやり直していないので、解析の設定や版が違えば、関数や参照の数は変わり得ます。",
     "topic": "保存時点の解析結果であること"
+   },
+   {
+    "detail": "外部関数の登録先: 登録先（ライブラリ名）が保存されている外部関数の登録先が 2 種類しかなく、選択肢を 4 つ作れませんでした。空欄や不明（<EXTERNAL>）はライブラリ名として扱っていません。",
+    "topic": "作れなかった設問"
+   },
+   {
+    "detail": "根拠の揃った設問が 9 問ありましたが、1 回の演習は 8 問までにしているため、次の種類の設問を一部出していません: 文字列を参照する関数をたどる。根拠が足りなかったわけではありません。",
+    "topic": "出題数の上限で採用しなかった設問"
    }
   ]
+ },
+ "selection": {
+  "candidates": 9,
+  "maxQuestions": 8,
+  "notGenerated": [
+   {
+    "label": "外部関数の登録先を読む",
+    "reason": "外部関数の登録先: 登録先（ライブラリ名）が保存されている外部関数の登録先が 2 種類しかなく、選択肢を 4 つ作れませんでした。空欄や不明（<EXTERNAL>）はライブラリ名として扱っていません。",
+    "templateId": "static.external-library"
+   }
+  ],
+  "notSelected": [
+   {
+    "id": "q-strsrc-2",
+    "label": "文字列を参照する関数をたどる",
+    "reason": "出題数の上限（8 問）のため採用しませんでした。",
+    "templateId": "static.string-referrer"
+   }
+  ],
+  "selected": 8,
+  "templateCounts": {
+   "static.call": 2,
+   "static.caller": 1,
+   "static.external": 1,
+   "static.limits": 1,
+   "static.string-ref": 2,
+   "static.string-referrer": 1
+  }
  },
  "source": {
   "note": "GZF に保存済みの解析情報から自動生成した演習です。対象プログラムは実行していません。",
@@ -418,10 +550,31 @@
       "ev-acb14acf16f5f407a8a0b956"
      ],
      "type": "string"
+    },
+    {
+     "detail": "print_usage / ram:00101185: LEA RDI,[0x00102030]",
+     "evidenceIds": [
+      "ev-dc718ef42cd07f6cb3f5554e"
+     ],
+     "type": "instruction"
+    },
+    {
+     "detail": "draw / ram:00101195: LEA RDI,[0x00102050]",
+     "evidenceIds": [
+      "ev-ee4f534e0cd3d6b112125182"
+     ],
+     "type": "instruction"
+    },
+    {
+     "detail": "main / ram:00101210: LEA RDI,[0x00102000]",
+     "evidenceIds": [
+      "ev-5feb0fb9e29999fafd0af78d"
+     ],
+     "type": "instruction"
     }
    ],
    "id": "static-strings",
-   "intro": "Ghidra は、命令がどのアドレスのデータを指しているかを「参照」として保存します。\n\n下の記録には、ある関数の命令と、プログラム内に定義された文字列が並んでいます。命令の参照先アドレスと、文字列が置かれたアドレスを突き合わせてください。",
+   "intro": "Ghidra は、命令がどのアドレスのデータを指しているかを「参照」として保存します。\n\n下の記録には、関数の命令と、プログラム内に定義された文字列が並んでいます。命令の参照先アドレスと、文字列が置かれたアドレスを突き合わせてください。命令から文字列へたどる設問と、文字列から参照元の関数へ逆にたどる設問があります。",
    "name": "段階1 — 文字列の参照を読む",
    "quizzes": [
     {
@@ -462,6 +615,7 @@
      "subjectEvidenceIds": [
       "ev-f32aea0b75fa791603f939c7"
      ],
+     "templateId": "static.string-ref",
      "type": "single_choice"
     },
     {
@@ -502,6 +656,47 @@
      "subjectEvidenceIds": [
       "ev-bc844a01fd8a4a0d6a0b0844"
      ],
+     "templateId": "static.string-ref",
+     "type": "single_choice"
+    },
+    {
+     "answerCheck": {
+      "kind": "string-referrer",
+      "string": "str:ram:0000000000102050"
+     },
+     "category": "static-string",
+     "correct": 3,
+     "evidenceIds": [
+      "ev-ba081b8c8769da898fc51b97",
+      "ev-ee4f534e0cd3d6b112125182"
+     ],
+     "explain": "ram:00101195 の命令「LEA RDI,[0x00102050]」の参照先は ram:00102050 で、この命令は関数 draw @ ram:00101190 の中にあります。\n\nほかの選択肢の関数には、この文字列（同じ中身の別のアドレスの文字列も含む）への参照命令が記録されていません。参照命令があることは、その関数が実行時にこの文字列を使ったことまでは示しません。",
+     "hints": [
+      "問題の文字列のアドレスを確かめてください。同じ中身の文字列が別のアドレスにあることもあるので、中身ではなくアドレスで見分けます。",
+      "この段階に並んだ命令の記録それぞれについて、「参照先」のアドレスが問題の文字列のアドレスと一致するかを見てください。",
+      "一致した命令の「関数」の欄が答えです。関数名の印象や、文字列の中身と関係がありそうかどうかでは決めません。"
+     ],
+     "id": "q-strsrc-1",
+     "learningObjective": "文字列のアドレスから、それを参照する命令と関数を逆にたどる",
+     "optionIds": [
+      "fn:ram:0000000000101180",
+      "fn:ram:0000000000101200",
+      "fn:ram:0000000000101100",
+      "fn:ram:0000000000101190"
+     ],
+     "options": [
+      "print_usage @ ram:00101180",
+      "main @ ram:00101200",
+      "init_board @ ram:00101100",
+      "draw @ ram:00101190"
+     ],
+     "prompt": "ram:00102050 の定義済み文字列 「Mines left: %d」 について。この文字列への参照命令を持つ関数はどれですか。",
+     "q": "ram:00102050 の定義済み文字列 「Mines left: %d」 について。この文字列への参照命令を持つ関数はどれですか。",
+     "subjectEvidenceIds": [
+      "ev-ba081b8c8769da898fc51b97"
+     ],
+     "subjectLabel": "問題の文字列を見る",
+     "templateId": "static.string-referrer",
      "type": "single_choice"
     }
    ]
@@ -556,10 +751,24 @@
       "ev-f7a356b61d69d53736e6896f"
      ],
      "type": "function"
+    },
+    {
+     "detail": "print_usage / ram:00101185: LEA RDI,[0x00102030]",
+     "evidenceIds": [
+      "ev-dc718ef42cd07f6cb3f5554e"
+     ],
+     "type": "instruction"
+    },
+    {
+     "detail": "draw / ram:001011a0: CALL 0x00101180",
+     "evidenceIds": [
+      "ev-d465b5b6d26b93a729e303c1"
+     ],
+     "type": "call"
     }
    ],
    "id": "static-calls",
-   "intro": "呼び出し命令（x86 の CALL など）は、行き先のアドレスを持ちます。そのアドレスがどの関数の入口かを、関数の記録と照らし合わせて確かめます。\n\n間接呼び出し（レジスタやメモリの値で行き先が決まるもの）は、この教材では扱いません。",
+   "intro": "呼び出し命令（x86 の CALL など）は、行き先のアドレスを持ちます。そのアドレスがどの関数の入口かを、関数の記録と照らし合わせて確かめます。命令から行き先へ、関数から呼び出し元へ、の両方向があります。\n\n間接呼び出し（レジスタやメモリの値で行き先が決まるもの）は、この教材では扱いません。",
    "name": "段階2 — 直接呼び出しを読む",
    "quizzes": [
     {
@@ -599,6 +808,7 @@
      "subjectEvidenceIds": [
       "ev-93109eaac411b02544fa0faa"
      ],
+     "templateId": "static.call",
      "type": "single_choice"
     },
     {
@@ -638,6 +848,47 @@
      "subjectEvidenceIds": [
       "ev-05469bb80490510142b8d42e"
      ],
+     "templateId": "static.call",
+     "type": "single_choice"
+    },
+    {
+     "answerCheck": {
+      "kind": "caller",
+      "target": "fn:ram:0000000000101150"
+     },
+     "category": "static-call",
+     "correct": 1,
+     "evidenceIds": [
+      "ev-f7a356b61d69d53736e6896f",
+      "ev-05469bb80490510142b8d42e"
+     ],
+     "explain": "ram:00101120 の命令「CALL 0x00101150」の呼び出し先は ram:00101150 で、place_mines の入口と一致します。この命令は関数 init_board @ ram:00101100 の中にあります。\n\nほかの選択肢の関数には、この入口への直接呼び出し命令が記録されていません。ここで分かるのは「呼び出す命令がある」ことまでです。実行時に実際に呼ばれたか、間接呼び出しなど記録に行き先の無い呼び出しで到達するかは、この記録からは分かりません。",
+     "hints": [
+      "問題の関数の入口アドレスを確かめてください。",
+      "この段階に並んだ呼び出し命令の記録それぞれについて、「呼び出し先」のアドレスが、その入口アドレスと一致するかを見てください。",
+      "一致した命令を持つ関数が答えです。thunk（中継の関数）を経由する呼び出しや、行き先が実行時に決まる間接呼び出しは、ここでは直接呼び出しに数えません。"
+     ],
+     "id": "q-caller-1",
+     "learningObjective": "関数の入口アドレスから、そこへの直接呼び出し命令を持つ関数を逆にたどる",
+     "optionIds": [
+      "fn:ram:0000000000101200",
+      "fn:ram:0000000000101100",
+      "fn:ram:0000000000101180",
+      "fn:ram:0000000000101190"
+     ],
+     "options": [
+      "main @ ram:00101200",
+      "init_board @ ram:00101100",
+      "print_usage @ ram:00101180",
+      "draw @ ram:00101190"
+     ],
+     "prompt": "関数 place_mines @ ram:00101150 について。この関数の入口への直接呼び出し命令を持つ関数はどれですか。",
+     "q": "関数 place_mines @ ram:00101150 について。この関数の入口への直接呼び出し命令を持つ関数はどれですか。",
+     "subjectEvidenceIds": [
+      "ev-f7a356b61d69d53736e6896f"
+     ],
+     "subjectLabel": "問題の関数を見る",
+     "templateId": "static.caller",
      "type": "single_choice"
     }
    ]
@@ -674,8 +925,8 @@
     }
    ],
    "id": "static-externals",
-   "intro": "プログラムの中にある関数と、共有ライブラリなど外から取り込む関数は、Ghidra の記録では登録先（アドレス空間）が違います。",
-   "name": "段階3 — 外部関数を見分ける",
+   "intro": "プログラムの中にある関数と、共有ライブラリなど外から取り込む関数は、Ghidra の記録では登録先（アドレス空間）が違います。外部関数のレコードには、登録先として保存されたライブラリ名が付くことがあります。",
+   "name": "段階3 — 外部関数を読む",
    "quizzes": [
     {
      "answerCheck": {
@@ -710,6 +961,73 @@
      "prompt": "次の関数のうち、このプログラムに外部関数（プログラムの外にある関数）として登録されているものはどれですか。",
      "q": "次の関数のうち、このプログラムに外部関数（プログラムの外にある関数）として登録されているものはどれですか。",
      "subjectEvidenceIds": [],
+     "templateId": "static.external",
+     "type": "single_choice"
+    }
+   ]
+  },
+  {
+   "events": [
+    {
+     "detail": "draw / ram:001011a0: CALL 0x00101180",
+     "evidenceIds": [
+      "ev-d465b5b6d26b93a729e303c1"
+     ],
+     "type": "call"
+    },
+    {
+     "detail": "print_usage @ ram:00101180",
+     "evidenceIds": [
+      "ev-e1c370c8a35e83f2f69f9805"
+     ],
+     "type": "function"
+    }
+   ],
+   "id": "static-limits",
+   "intro": "保存済みの解析情報から確かめられるのは、どこにどんな命令やデータがあるかまでです。下の記録を見て、確かめられる事実と、確かめられない主張を分けます。",
+   "name": "段階4 — 記録から言えないことを分ける",
+   "quizzes": [
+    {
+     "answerCheck": {
+      "from": "ram:00000000001011a0",
+      "function": "fn:ram:0000000000101190",
+      "kind": "limits",
+      "subject": "call"
+     },
+     "category": "static-limits",
+     "correct": 2,
+     "evidenceIds": [
+      "ev-d465b5b6d26b93a729e303c1",
+      "ev-e1c370c8a35e83f2f69f9805"
+     ],
+     "explain": "「この呼び出しが、実行時に実際に行われた」は、この記録のどの欄にも書かれていません。ほかの選択肢は、下の記録の関数・アドレス・命令・参照先の欄で確かめられる事実です。\n\n静的な記録が示すのは、どこにどんな命令やデータがあるかまでです。実行されたか、何回か、何のためかは、この教材が扱う保存済みの解析情報からは決まりません。確かめたい場合は、この記録とは別の種類の証拠が必要になります。",
+     "hints": [
+      "選択肢を一つずつ、上の記録のどの欄で確かめられるかを考えてください（関数・アドレス・命令・参照先）。",
+      "記録の欄で確かめられるのは「どんな命令やデータがどこにあるか」までです。",
+      "いつ・何回・何のために、は静的な記録の欄には書かれていません。確かめられる欄が見つからない選択肢を選びます。"
+     ],
+     "id": "q-slimits-1",
+     "learningObjective": "保存された記録で確かめられる事実と、確かめられない主張を分ける",
+     "optionIds": [
+      "stored:instruction",
+      "stored:target-address",
+      "hypothesis:executed",
+      "stored:target-function"
+     ],
+     "optionKind": "claims",
+     "options": [
+      "関数 draw の ram:001011a0 に CALL 命令が記録されている",
+      "この命令の直接の行き先として ram:00101180 が記録されている",
+      "この呼び出しが、実行時に実際に行われた",
+      "ram:00101180 は、関数 print_usage の入口として記録されている"
+     ],
+     "prompt": "関数 draw の ram:001011a0 にある CALL 命令について。下に示した記録だけでは確認できないことはどれですか。",
+     "q": "関数 draw の ram:001011a0 にある CALL 命令について。下に示した記録だけでは確認できないことはどれですか。",
+     "subjectEvidenceIds": [
+      "ev-d465b5b6d26b93a729e303c1",
+      "ev-e1c370c8a35e83f2f69f9805"
+     ],
+     "templateId": "static.limits",
      "type": "single_choice"
     }
    ]
@@ -742,13 +1060,24 @@
    "storedExecutableSha256": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
   },
   "questionCounts": {
-   "call": 2,
+   "call": 3,
    "external": 1,
-   "string": 2
+   "limits": 1,
+   "string": 3
   },
   "sample": null,
   "schemaVersion": "zip2learn-ghidra-static/1",
-  "skipped": [],
+  "skipped": [
+   "外部関数の登録先: 登録先（ライブラリ名）が保存されている外部関数の登録先が 2 種類しかなく、選択肢を 4 つ作れませんでした。空欄や不明（<EXTERNAL>）はライブラリ名として扱っていません。"
+  ],
+  "templateCounts": {
+   "static.call": 2,
+   "static.caller": 1,
+   "static.external": 1,
+   "static.limits": 1,
+   "static.string-ref": 2,
+   "static.string-referrer": 1
+  },
   "tool": {
    "arch": "arm64",
    "ghidraVersion": "12.1.4",

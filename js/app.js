@@ -5,6 +5,7 @@ import { renderLesson } from "./player.js";
 import { renderArchive, renderInspect } from "./inspect.js";
 import { renderGhidra } from "./ghidra.js";
 import { initTheme } from "./theme.js";
+import { clearMotion } from "./motion.js";
 
 const MOUNT_ID = "app";
 
@@ -56,6 +57,8 @@ async function render() {
   // than keep fetching for a screen nobody is looking at.
   const view = document.createElement("div");
   app.replaceChildren(view);
+  // 回答の ○・× や結果の数え上げを、次の画面へ持ち越さない。
+  clearMotion();
 
   const route = parseRoute();
   try {

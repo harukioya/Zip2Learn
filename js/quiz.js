@@ -4,6 +4,8 @@
 // All lesson text is rendered with textContent (never innerHTML).
 
 import { citedEvidence, jumpButtons, visible } from './evidence.js';
+import { showAnswerMark } from './motion.js';
+import { repeatedClick } from './dom.js';
 
 const KEYS = ['A', 'B', 'C', 'D', 'E', 'F'];
 
@@ -19,6 +21,7 @@ const CATEGORY_HINTS = {
   'static-string': '命令の参照先アドレスと、定義済み文字列の記録のアドレスを照らし合わせてください。',
   'static-call': '呼び出し命令の行き先アドレスと、関数の入口アドレスを照らし合わせてください。',
   'static-external': '各記録のアドレス空間と登録先を確かめ、プログラムの外にある関数を探してください。',
+  'static-limits': '選択肢ごとに、下の記録のどの欄で確かめられるかを考えてください。確かめられる欄が無いものを選びます。',
 };
 
 /** Ghidra の保存済み解析情報から作った設問か。ボタンの言い方を変える。 */
@@ -74,7 +77,21 @@ function optionText(option) {
  * 根拠を選ばせる設問（evidence_pick）は、項目が付いていても空を返す。
  * そこで根拠を先に見せたら、答えを押す前に答えを見せることになる。
  */
-const PRESENTS_RECORD = new Set(['attck', 'limits', 'correlation']);
+const PRESENTS_RECORD = new Set(['attck', 'limits', 'correlation', 'static-limits']);
+
+/**
+ * 解答前に対象の記録へ飛ぶボタンの文言。
+ *
+ * 対象は設問によって、ログの行・命令・文字列・関数と違う。教材が
+ * `subjectLabel` で対象に合った言い方を持っていればそれを使う。持たない
+ * 旧教材は、従来どおり種類から決める。
+ */
+function subjectButtonText(quiz) {
+  if (typeof quiz.subjectLabel === 'string' && quiz.subjectLabel.trim()) {
+    return visible(quiz.subjectLabel);
+  }
+  return isStaticQuiz(quiz) ? '問題の命令を見る' : '問題の行を見る';
+}
 
 function subjectIds(quiz) {
   if (quiz.type === 'evidence_pick') return [];
@@ -142,7 +159,7 @@ export function renderQuiz(container, quiz, onAnswered, evidence) {
   const ids = subjectIds(quiz);
   const subject = subjectShown
     ? citedEvidence(ids, map, undefined, '対象の記録')
-    : jumpButtons(ids, map, 'stage', isStaticQuiz(quiz) ? '問題の命令を見る' : '問題の行を見る');
+    : jumpButtons(ids, map, 'stage', subjectButtonText(quiz));
   if (subject) {
     subject.classList.add('quiz__subject');
     quizEl.appendChild(subject);
@@ -223,7 +240,12 @@ export function renderQuiz(container, quiz, onAnswered, evidence) {
     btn.appendChild(key);
     btn.appendChild(text);
     btn.setAttribute('aria-label', `${KEYS[i] || i + 1}: ${optionText(label)}`);
-    btn.addEventListener('click', () => answer(i));
+    // 2 回目以降のクリック（ダブルクリックの後半）は数えない。「次の問題へ」を
+    // 素早く 2 回押すと、2 回目が差し替わった新しい選択肢に当たることがある。
+    btn.addEventListener('click', (e) => {
+      if (repeatedClick(e)) return;
+      answer(i);
+    });
     optionsEl.appendChild(btn);
     return btn;
   });
@@ -238,6 +260,7 @@ export function renderQuiz(container, quiz, onAnswered, evidence) {
     answered = true;
 
     const isCorrect = chosen === quiz.correct;
+    buttons[chosen].classList.add('is-pressed');
 
     // Lock every option and paint the result. Correctness is also conveyed
     // non-visually (a text marker + aria-label) so it survives greyscale and
@@ -326,8 +349,21 @@ export function renderQuiz(container, quiz, onAnswered, evidence) {
 
     document.removeEventListener('keydown', onKey);
 
+    // 見た目だけの演出。採点・解説・次へはこれを待たない。
+    showAnswerMark(container, isCorrect);
+
     if (typeof onAnswered === 'function') onAnswered(isCorrect);
   }
+
+  // 数字キーを横取りしてはいけない場面。入力欄・編集領域への入力と、IME の
+  // 変換中（keyCode 229）。
+  const typing = (e) => {
+    if (e.isComposing || e.keyCode === 229) return true;
+    const t = e.target;
+    if (!t || typeof t !== 'object') return false;
+    if (t.isContentEditable) return true;
+    return ['INPUT', 'TEXTAREA', 'SELECT'].includes(String(t.tagName || '').toUpperCase());
+  };
 
   // Optional number-key shortcuts (1–4/6). Buttons already handle Enter/Space.
   function onKey(e) {
@@ -339,7 +375,9 @@ export function renderQuiz(container, quiz, onAnswered, evidence) {
       return;
     }
     if (answered) return;
-    if (e.altKey || e.ctrlKey || e.metaKey) return;
+    if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+    // 前の問題で押した数字キーを押し続けていても、新しい問題には答えない。
+    if (e.repeat || typing(e)) return;
     const n = parseInt(e.key, 10);
     if (Number.isInteger(n) && n >= 1 && n <= buttons.length) {
       e.preventDefault();

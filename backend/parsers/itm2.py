@@ -84,19 +84,41 @@ def parse_timestamp(line: str, source: str = "") -> timeline.Stamp:
     if not m:
         return timeline.UNKNOWN
     g = m.groupdict()
+    frac = g.get("frac") or ""
     return timeline.stamp(
         year=int(g["year"]), mon=int(g["mon"]), day=int(g["day"]),
         hh=int(g["hh"]), mm=int(g["mm"]), ss=int(g["ss"]),
-        frac=float(f"0.{g['frac']}") if g.get("frac") else 0.0,
+        frac=float(f"0.{frac}") if frac else 0.0,
         tz=g.get("tz"), display=m.group(0).strip(), source=source,
+        # 小数部の桁数が、この行の時刻の細かさ。書かれていなければ秒単位。
+        resolution=10.0 ** -len(frac) if frac else 1.0,
     )
 
 
+#: 保存用の切り詰め（`evidence.visible`）が末尾に付ける印。
+_CLIPPED = "…"
+
+
 def field_in(text: str, key: str) -> str:
-    """key=value 形式の 1 行から、その項目の値を読む。無ければ空。"""
-    for m in _KV.finditer(text or ""):
-        if m.group(1) == key:
-            return (m.group(3) if m.group(3) is not None else m.group(2)) or ""
+    """key=value 形式の 1 行から、その項目の値を読む。無ければ空。
+
+    途中で切れた値は読めなかったことにする。抜粋は上限で切り詰められる
+    ので、引用符が閉じていない値や、切り詰めの印で終わる値は、原文の一部
+    でしかない。一部を「この項目の値」として出題すると、ログに書かれて
+    いない値を正解にすることになる。
+    """
+    text = text or ""
+    for m in _KV.finditer(text):
+        if m.group(1) != key:
+            continue
+        if m.group(3) is not None:
+            return m.group(3)
+        raw = m.group(2) or ""
+        if raw.startswith('"'):
+            return ""   # 閉じる引用符の前で切れている
+        if raw and m.end() == len(text) and text.endswith(_CLIPPED):
+            return ""   # 切り詰めの印まで続いた値
+        return raw
     return ""
 
 
@@ -151,12 +173,24 @@ class Itm2Parser(Parser):
         ("process", "host"): FactText(
             where="`{field}` が、その記録を残した端末の名前です。",
         ),
+        ("process", "command_line"): FactText(
+            where=("プロセスの起動記録には、起動時に渡されたコマンドラインが `{field}` "
+                   "として残ります。起動した実行ファイル（`psPath`）や親プロセス"
+                   "（`parentPath`）とは別の項目です。"),
+            next="この起動の親プロセス（`parentPath`）と、同じ端末の前後の記録を確かめる",
+        ),
         ("file", "path"): FactText(
             where="`{field}` に、書き込まれたファイルの完全なパスが残ります。",
         ),
         ("file", "host"): FactText(
             where="端末名は `{field}` にあります。",
         ),
+    }
+
+    #: `evt=file` の `subEvt`。この形式が区別して記録する操作だけを書く。
+    OPERATION_LABELS = {
+        ("file", "create"): "作成",
+        ("file", "write"): "書き込み",
     }
 
     def detect(self, source: InputSource) -> float:
@@ -238,6 +272,13 @@ class Itm2Parser(Parser):
             key = "com"
         elif fact == "path" and kind in ("file", "registry"):
             key = "path"
+        elif fact == "operation" and kind == "file":
+            # 操作の種類。ファイルの記録であることも、同じ抜粋で確かめる。
+            # `evt` が無い・別の値の行（起動記録の `path` など）を、ファイル
+            # 操作の根拠として読まない。
+            if field_in(excerpt, "evt") != "file":
+                return None
+            key = "subEvt"
         else:
             return None
         value = field_in(excerpt, key)

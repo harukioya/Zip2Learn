@@ -64,6 +64,17 @@ export function glossary(entries = GLOSSARY) {
   return box;
 }
 
+/**
+ * 実際に出す設問の数。段階に載った設問から数える（得点の母数と同じ数え方）。
+ * 旧形式の段階は `quiz` が 1 つだけのことがある。
+ */
+function questionCount(lesson) {
+  return (Array.isArray(lesson.stages) ? lesson.stages : []).reduce((n, s) => {
+    if (Array.isArray(s.quizzes) && s.quizzes.length) return n + s.quizzes.length;
+    return n + (s.quiz ? 1 : 0);
+  }, 0);
+}
+
 /** 値が無いときに、推測ではなくその旨を返す。 */
 const orUnknown = (values, fallback) =>
   Array.isArray(values) && values.length ? values : [fallback];
@@ -122,6 +133,7 @@ export function renderIntroduction(mount, lesson, onStart) {
     ['使用するログ', orUnknown(intro.logTypes, '取得できませんでした').join('、')],
     ['対象ホスト', orUnknown(intro.hosts, '記録からは分かりません').join('、')],
     ['段階の数', `${(lesson.stages || []).length} 段階`],
+    ['設問の数', `${questionCount(lesson)} 問`],
     ['所要時間の目安', intro.estimatedMinutes ? `およそ ${intro.estimatedMinutes} 分` : '取得できませんでした'],
   ];
   const table = el('dl', 'factlist');
@@ -254,7 +266,7 @@ function renderStaticIntroduction(mount, lesson, onStart) {
     ['元の実行ファイルの SHA-256（GZF に保存された値）', program.storedExecutableSha256 || '記録なし'],
     ['Ghidra の版 / 抽出スクリプトの版', `${tool.ghidraVersion || ''} / ${tool.scriptVersion || ''}`],
     ['処理イメージ', `${tool.imageRef || ''} ${tool.imageId ? `（${tool.imageId}）` : ''}`],
-    ['設問', `文字列の参照 ${counts.string || 0} 問・直接呼び出し ${counts.call || 0} 問・外部関数 ${counts.external || 0} 問`],
+    ['設問', `全 ${questionCount(lesson)} 問（文字列の参照 ${counts.string || 0}・直接呼び出し ${counts.call || 0}・外部関数 ${counts.external || 0}・記録から言えないこと ${counts.limits || 0}）`],
     ['所要時間の目安', intro.estimatedMinutes ? `およそ ${intro.estimatedMinutes} 分` : '取得できませんでした'],
   ];
   const table = el('dl', 'factlist');
