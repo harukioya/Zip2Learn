@@ -49,8 +49,9 @@ export async function renderLesson(mount, lessonId) {
     return;
   }
 
-  const stages = Array.isArray(lesson.stages) ? lesson.stages : [];
-  const total = stages.length;
+  const allStages = Array.isArray(lesson.stages) ? lesson.stages : [];
+  let stages = allStages;
+  let total = stages.length;
   const evidence = evidenceMap(lesson);
   // 静的解析の教材は「観測」ではなく、保存済みの記録を読む。実行したかの
   // ように見える言い方をしない。
@@ -73,15 +74,24 @@ export async function renderLesson(mount, lessonId) {
   //
   // 全体の進捗（「問題 4 / 8」）も同じ並びから出す。全段階の設問を順に並べ、
   // 各段階の最初の設問が何問目にあたるかを持っておく。
-  const sequence = stages.flatMap((stage) => quizzesOf(stage).map((quiz) => ({ stage, quiz })));
-  const questionTotal = sequence.length;
-  const firstAt = [];
-  stages.reduce((n, s, i) => { firstAt[i] = n; return n + quizzesOf(s).length; }, 0);
+  let sequence = [];
+  let questionTotal = 0;
+  let firstAt = [];
+  const refreshSequence = () => {
+    sequence = stages.flatMap((stage) => quizzesOf(stage).map((quiz) => ({ stage, quiz })));
+    questionTotal = sequence.length;
+    firstAt = [];
+    stages.reduce((n, s, i) => { firstAt[i] = n; return n + quizzesOf(s).length; }, 0);
+  };
+  refreshSequence();
+  const initialQuestionTotal = questionTotal;
   let correct = 0;
 
   // 復習中か（結果から段階へ戻ったか）と、完了の演出を一度出したか。
   // 得点と回答済みの件数は、どちらも初回の回答（`answers`）だけから数える。
   let reviewing = false;
+  // 再出題中だけ使う誤答集合。再出題で正解した問題は次の周回から外す。
+  let retryWrongIds = null;
   let celebrated = false;
 
   // 回答履歴。最終レポートの段階別・カテゴリ別得点と、間違えた問題の復習に
@@ -166,9 +176,12 @@ export async function renderLesson(mount, lessonId) {
     reviewing = false;
     renderRecap(mount, lesson, {
       correct,
-      total: questionTotal,
+      total: initialQuestionTotal,
       answers: [...answers.values()],
       animate,
+      retryIncorrect: retryWrongIds === null || retryWrongIds.size
+        ? startIncorrectRetry
+        : null,
       // 復習から段階へ戻れるようにする。得点は `answers` が鍵で
       // 重複を弾くので、戻って解き直しても二重加算されない。
       goToStage: (stageId) => {
@@ -183,6 +196,27 @@ export async function renderLesson(mount, lessonId) {
         scrollToTop();
       },
     });
+    scrollToTop();
+  };
+
+  const startIncorrectRetry = () => {
+    const wrongIds = retryWrongIds || new Set(
+      [...answers.values()].filter((answer) => !answer.correct).map((answer) => answer.questionId)
+    );
+    if (!wrongIds.size) return;
+    retryWrongIds = wrongIds;
+    const retryStages = allStages.map((stage) => {
+      const quizzes = quizzesOf(stage).filter((quiz) => wrongIds.has(keyOf(stage, quiz)));
+      return quizzes.length ? { ...stage, quizzes } : null;
+    }).filter(Boolean);
+    if (!retryStages.length) return;
+    stages = retryStages;
+    total = stages.length;
+    refreshSequence();
+    reviewing = true;
+    mount.textContent = '';
+    mount.appendChild(player);
+    renderStage(0);
     scrollToTop();
   };
 
@@ -421,6 +455,11 @@ export async function renderLesson(mount, lessonId) {
             scored.add(qi);
             first = record(stage, quizzes[qi], isCorrect);
             if (first && isCorrect) correct++;
+            if (retryWrongIds) {
+              const questionId = keyOf(stage, quizzes[qi]);
+              if (isCorrect) retryWrongIds.delete(questionId);
+              else retryWrongIds.add(questionId);
+            }
           }
           // 初回の回答だけが進捗を進める。復習での回答は記録を変えない。
           progress.update(first);

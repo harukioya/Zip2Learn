@@ -10,9 +10,10 @@
 
 import assert from 'node:assert/strict';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+const moduleUrl = (relativePath) => pathToFileURL(path.join(REPO, relativePath)).href;
 
 // ---------------------------------------------------------------------------
 // 最小の DOM
@@ -180,10 +181,10 @@ async function test(name, fn) {
   catch (e) { results.push(['NG', name, e.stack || e.message]); }
 }
 
-const { renderLesson } = await import(REPO + '/js/player.js');
-const { renderQuiz } = await import(REPO + '/js/quiz.js');
-const { renderRecap } = await import(REPO + '/js/recap.js');
-const { MARK_MS, clearMotion } = await import(REPO + '/js/motion.js');
+const { renderLesson } = await import(moduleUrl('js/player.js'));
+const { renderQuiz } = await import(moduleUrl('js/quiz.js'));
+const { renderRecap } = await import(moduleUrl('js/recap.js'));
+const { MARK_MS, clearMotion } = await import(moduleUrl('js/motion.js'));
 
 async function open(obj) {
   globalThis.fetch = async () => ({ ok: true, status: 200, json: async () => obj });
@@ -594,6 +595,33 @@ await test('間違いがあれば復習ボタンから「間違えた問題」�
   view = await open(multi());
   await playAll(view, [0, 1, 1]);
   assert.equal(app.button(/間違えた問題を復習する/), undefined, '間違いがなければ出さない');
+});
+
+await test('誤答だけを再出題し、初回の成績を維持する', async () => {
+  const view = await open(multi());
+  await playAll(view, [0, 0, 1]);               // b だけ不正解
+  assert.equal(heading().textContent, '正解 2 / 3');
+
+  const retry = app.button(/^間違えた問題から出題する$/);
+  assert.ok(retry);
+  await retry.click();
+  assert.ok(view.cls('review-badge')[0], '再出題中であることを示す');
+  assert.match(view.textContent, /問い b/);
+  assert.ok(!view.textContent.includes('問い a'), '初回正解の問題を出さない');
+  assert.equal(titleText(view), '問題 1 / 1');
+
+  await view.cls('option')[0].click();                // b を再び不正解
+  await view.button(/^結果を見る$/).click();
+  assert.equal(heading().textContent, '正解 2 / 3', '初回の成績を維持');
+  assert.ok(app.button(/^間違えた問題から出題する$/), '誤答が残る場合は再出題できる');
+
+  await app.button(/^間違えた問題から出題する$/).click();
+  assert.equal(titleText(view), '問題 1 / 1', '残っている誤答だけを再出題する');
+  await view.cls('option')[1].click();                 // b を今度は正解
+  await view.button(/^結果を見る$/).click();
+  assert.equal(heading().textContent, '正解 2 / 3', '初回の成績は変わらない');
+  assert.equal(app.button(/^間違えた問題から出題する$/), undefined, '解けた問題は次の周回から外す');
+  clearMotion();
 });
 
 await test('% は 0 から数え上げるが、読み上げと見出しは最初から最終値', async () => {

@@ -198,7 +198,7 @@ function doneMessage(correct, total) {
 /**
  * @param {HTMLElement} mount
  * @param {object} lesson
- * @param {{correct:number,total:number,answers?:Array,goToStage?:Function}} stats
+ * @param {{correct:number,total:number,answers?:Array,goToStage?:Function,retryIncorrect?:Function}} stats
  */
 export function renderRecap(mount, lesson, stats) {
   clearMotion();
@@ -209,6 +209,7 @@ export function renderRecap(mount, lesson, stats) {
   const total = Number(stats && stats.total) || 0;
   const answers = (stats && stats.answers) || [];
   const goToStage = stats && stats.goToStage;
+  const retryIncorrect = stats && stats.retryIncorrect;
   // 完了の演出（数え上げ・弧・一言の出方）は最初の 1 回だけ。復習から
   // 戻ったときは最終値のまま出す。
   const animate = !!(stats && stats.animate) && !reducedMotion();
@@ -252,6 +253,12 @@ export function renderRecap(mount, lesson, stats) {
       wrongBox.focus({ preventScroll: true });
     });
     const reviewNav = el('div', 'navbtns navbtns--wrap');
+    if (retryIncorrect) {
+      const retry = el('button', 'btn btn-primary btn-sm', '間違えた問題から出題する');
+      retry.type = 'button';
+      retry.addEventListener('click', retryIncorrect);
+      reviewNav.append(retry);
+    }
     reviewNav.append(toReview);
     root.appendChild(reviewNav);
   }
