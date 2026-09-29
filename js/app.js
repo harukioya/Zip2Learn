@@ -4,6 +4,7 @@ import { renderHome } from "./home.js";
 import { renderLesson } from "./player.js";
 import { renderArchive, renderInspect } from "./inspect.js";
 import { renderGhidra } from "./ghidra.js";
+import { renderLicenses } from "./licenses.js";
 import { initTheme } from "./theme.js";
 import { clearMotion } from "./motion.js";
 
@@ -36,6 +37,9 @@ function parseRoute() {
   }
   if (parts[0] === "ghidra") {
     return { view: "ghidra" };
+  }
+  if (parts[0] === "licenses") {
+    return { view: "licenses" };
   }
   return { view: "home" };
 }
@@ -70,6 +74,8 @@ async function render() {
       await renderArchive(view, route.id);
     } else if (route.view === "ghidra") {
       await renderGhidra(view);
+    } else if (route.view === "licenses") {
+      await renderLicenses(view);
     } else {
       await renderHome(view);
     }

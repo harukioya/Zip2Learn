@@ -409,7 +409,18 @@ export function renderRecap(mount, lesson, stats) {
 
   // ---- ATT&CK ----
   if (!staticLesson) root.appendChild(
-    section('MITRE ATT&CK との対応', (box) => {
+    section('MITRE ATT&CK® との対応', (box) => {
+      // 手法 ID・名称の出典と、対応付けが独自のものであることを先に示す。
+      const credit = el('p', 'muted',
+        '手法 ID・名称は MITRE ATT&CK® のものです。記録との対応付けは Zip2Learn 独自の規則によるもので、MITRE の承認・推奨を受けたものではありません。');
+      // 別タブで開く。回答履歴は保存していないので、このタブで移ると結果と
+      // 復習の状態が消える。
+      const link = el('a', null, 'ライセンスと出典（別タブ）');
+      link.href = '#/licenses';
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      credit.append(link);
+      box.append(credit);
       if (!techniques.length) {
         box.append(
           el('p', 'muted',

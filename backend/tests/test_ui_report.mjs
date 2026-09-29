@@ -237,7 +237,7 @@ await test('導入画面が出て、そこから調査を始められる', async
     text.includes('データセット形式: Example incident logs（fixture v1）／自動で判定した形式'),
     'データセット形式と、誰が決めたか'
   );
-  assert.ok(text.includes('自動生成した下書き'), '下書きであることを明示');
+  assert.ok(!text.includes('自動生成した下書き'), '導入画面に下書きの案内を出さない');
   assert.ok(text.includes('InfoTrace Mark II'), '使用するログ種別');
   assert.ok(text.includes('WS99'), '対象ホスト');
   assert.ok(text.includes('9 分'), '所要時間の目安');
@@ -1041,6 +1041,18 @@ await test('判断の根拠になった記録も畳み、畳まれたカード�
   assert.equal(toggle.textContent, '閉じる');
   assert.equal(toggle.attrs['aria-expanded'], 'true');
   assert.equal(globalThis.__focused.id, `ev-report-${EV_B}`, '開いたカードへフォーカス');
+});
+
+await test('ATT&CK の「ライセンスと出典」は別タブで開き、結果画面を残す', async () => {
+  const view = await open(lesson());
+  await playThrough(view, [1, 1]);
+  const box = sectionOf('MITRE ATT&CK® との対応');
+  assert.ok(box, 'ATT&CK の区画がある');
+  const link = box.find((e) => e.tag === 'a')[0];
+  assert.equal(link.href, '#/licenses');
+  assert.equal(link.target, '_blank', '別タブで開く（このタブの結果と復習の状態を消さない）');
+  assert.equal(link.rel, 'noopener noreferrer');
+  assert.equal(link.textContent, 'ライセンスと出典（別タブ）', '別タブで開くことを文言でも示す');
 });
 
 // ---------------------------------------------------------------------------
