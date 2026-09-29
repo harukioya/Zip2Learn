@@ -57,6 +57,8 @@ class El {
     this._text = '';
     this.children = cs.map((c) => this._adopt(c));
   }
+  // 回答直後の ○・× は、時間が来ると remove() で自分を外す。
+  remove() { if (this.parent) this.parent.children = this.parent.children.filter((x) => x !== this); this.parent = null; }
   setAttribute(k, v) { this.attrs[k] = v; }
   addEventListener(t, f) { (this._on[t] || (this._on[t] = [])).push(f); }
   click() { return Promise.all((this._on.click || []).map((f) => f())); }
@@ -360,9 +362,9 @@ await test('evidence_pick へ回答できる', async () => {
   await renderLesson(view, 'gen-test');
   await view.cls('option')[0].click();
   const next = view.find(
-    (e) => e.tag === 'button' && e.textContent === '次の設問へ'
+    (e) => e.tag === 'button' && e.textContent === '次の問題へ'
   )[0];
-  assert.ok(next, '次の設問へ進める');
+  assert.ok(next, '次の問題へ進める');
   await next.click();
   const labels = view.cls('option__label').map((e) => e.textContent);
   assert.deepEqual(labels, [
@@ -379,7 +381,7 @@ await test('選択肢のラベルから正解が漏れない', async () => {
   app.replaceChildren(view);
   await renderLesson(view, 'gen-test');
   await view.cls('option')[0].click();
-  await view.find((e) => e.tag === 'button' && e.textContent === '次の設問へ')[0].click();
+  await view.find((e) => e.tag === 'button' && e.textContent === '次の問題へ')[0].click();
   const labels = view.cls('option__label').map((e) => e.textContent);
   // 空配列だと forEach が素通りして、検査したつもりになる。件数を先に固定する。
   assert.equal(labels.length, 2, '選択肢が描画されていること');
@@ -402,7 +404,7 @@ await test('証拠のない旧形式レッスンが従来どおり動く', async
   );
   assert.ok(view.cls('reveal').length, '解説は従来どおり出る');
   assert.ok(
-    view.find((e) => e.tag === 'button' && /次へ|振り返りへ/.test(e.textContent)).length,
+    view.find((e) => e.tag === 'button' && /次の段階へ|結果を見る/.test(e.textContent)).length,
     '先へ進める'
   );
 });
@@ -449,11 +451,11 @@ await test('得点が設問数と一致する', async () => {
 
   // 設問1を正解、設問2を不正解にする。
   await view.cls('option')[1].click();          // q1 の正解は index 1
-  await view.find((e) => e.tag === 'button' && e.textContent === '次の設問へ')[0].click();
+  await view.find((e) => e.tag === 'button' && e.textContent === '次の問題へ')[0].click();
   await view.cls('option')[0].click();          // q2 の正解は index 1 なので不正解
 
   const cont = view.find(
-    (e) => e.tag === 'button' && /振り返りへ|次へ/.test(e.textContent)
+    (e) => e.tag === 'button' && /結果を見る|次の段階へ/.test(e.textContent)
   )[0];
   // recap は mount を置き換えるので、描画結果から得点表示を読む。
   await cont.click();
@@ -474,7 +476,7 @@ await test('設問のない旧形式は得点に数えない', async () => {
   app.replaceChildren(view);
   await renderLesson(view, 'gen-empty');
   const cont = view.find(
-    (e) => e.tag === 'button' && /振り返りへ/.test(e.textContent)
+    (e) => e.tag === 'button' && /結果を見る/.test(e.textContent)
   )[0];
   assert.ok(cont, '設問が無くても先へ進める');
   await cont.click();

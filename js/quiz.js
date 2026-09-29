@@ -4,6 +4,8 @@
 // All lesson text is rendered with textContent (never innerHTML).
 
 import { citedEvidence, jumpButtons, visible } from './evidence.js';
+import { showAnswerMark } from './motion.js';
+import { repeatedClick } from './dom.js';
 
 const KEYS = ['A', 'B', 'C', 'D', 'E', 'F'];
 
@@ -238,7 +240,12 @@ export function renderQuiz(container, quiz, onAnswered, evidence) {
     btn.appendChild(key);
     btn.appendChild(text);
     btn.setAttribute('aria-label', `${KEYS[i] || i + 1}: ${optionText(label)}`);
-    btn.addEventListener('click', () => answer(i));
+    // 2 回目以降のクリック（ダブルクリックの後半）は数えない。「次の問題へ」を
+    // 素早く 2 回押すと、2 回目が差し替わった新しい選択肢に当たることがある。
+    btn.addEventListener('click', (e) => {
+      if (repeatedClick(e)) return;
+      answer(i);
+    });
     optionsEl.appendChild(btn);
     return btn;
   });
@@ -253,6 +260,7 @@ export function renderQuiz(container, quiz, onAnswered, evidence) {
     answered = true;
 
     const isCorrect = chosen === quiz.correct;
+    buttons[chosen].classList.add('is-pressed');
 
     // Lock every option and paint the result. Correctness is also conveyed
     // non-visually (a text marker + aria-label) so it survives greyscale and
@@ -341,8 +349,21 @@ export function renderQuiz(container, quiz, onAnswered, evidence) {
 
     document.removeEventListener('keydown', onKey);
 
+    // 見た目だけの演出。採点・解説・次へはこれを待たない。
+    showAnswerMark(container, isCorrect);
+
     if (typeof onAnswered === 'function') onAnswered(isCorrect);
   }
+
+  // 数字キーを横取りしてはいけない場面。入力欄・編集領域への入力と、IME の
+  // 変換中（keyCode 229）。
+  const typing = (e) => {
+    if (e.isComposing || e.keyCode === 229) return true;
+    const t = e.target;
+    if (!t || typeof t !== 'object') return false;
+    if (t.isContentEditable) return true;
+    return ['INPUT', 'TEXTAREA', 'SELECT'].includes(String(t.tagName || '').toUpperCase());
+  };
 
   // Optional number-key shortcuts (1–4/6). Buttons already handle Enter/Space.
   function onKey(e) {
@@ -354,7 +375,9 @@ export function renderQuiz(container, quiz, onAnswered, evidence) {
       return;
     }
     if (answered) return;
-    if (e.altKey || e.ctrlKey || e.metaKey) return;
+    if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+    // 前の問題で押した数字キーを押し続けていても、新しい問題には答えない。
+    if (e.repeat || typing(e)) return;
     const n = parseInt(e.key, 10);
     if (Number.isInteger(n) && n >= 1 && n <= buttons.length) {
       e.preventDefault();

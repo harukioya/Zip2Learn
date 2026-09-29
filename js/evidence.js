@@ -232,6 +232,11 @@ export function jumpButtons(ids, map, scope = 'stage', text = '根拠ログを�
       // ので、ここで見つかるのは常に 1 枚だけになる。
       const card = document.getElementById(cardId(ident, scope));
       if (!card) return;
+      // レポートでは飛び先のカードが「続きを読む」の中に畳まれていることが
+      // ある。隠れたままではスクロールもフォーカスもできないので先に開く。
+      for (let n = card.parentNode; n; n = n.parentNode) {
+        if (n.hidden && typeof n.revealFold === 'function') n.revealFold();
+      }
       card.scrollIntoView({ block: 'center', behavior: 'smooth' });
       clearCited();
       card.classList.add('is-cited');

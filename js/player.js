@@ -8,7 +8,8 @@ import { renderQuiz } from './quiz.js';
 import { renderRecap } from './recap.js';
 import { clearCited, evidenceCard, evidenceMap, isStatic, sourceLabel, visible } from './evidence.js';
 import { renderIntroduction } from './intro.js';
-import { el } from './dom.js';
+import { el, ignoreHeldKey, repeatedClick, scrollToTop } from './dom.js';
+import { clearMotion } from './motion.js';
 
 // 事象の種別（データ側のキー）を、画面表示用の日本語に対応させる。
 // データの値そのものは変更しない。
@@ -69,23 +70,35 @@ export async function renderLesson(mount, lessonId) {
   //
   // 設問を持たない段階（証拠が無く落とされた旧形式など）は、母数にも得点にも
   // 入れない。以前はそうした段階が自動的に正解として加算されていた。
-  const questionTotal = stages.reduce((n, s) => n + quizzesOf(s).length, 0);
+  //
+  // 全体の進捗（「問題 4 / 8」）も同じ並びから出す。全段階の設問を順に並べ、
+  // 各段階の最初の設問が何問目にあたるかを持っておく。
+  const sequence = stages.flatMap((stage) => quizzesOf(stage).map((quiz) => ({ stage, quiz })));
+  const questionTotal = sequence.length;
+  const firstAt = [];
+  stages.reduce((n, s, i) => { firstAt[i] = n; return n + quizzesOf(s).length; }, 0);
   let correct = 0;
+
+  // 復習中か（結果から段階へ戻ったか）と、完了の演出を一度出したか。
+  // 得点と回答済みの件数は、どちらも初回の回答（`answers`）だけから数える。
+  let reviewing = false;
+  let celebrated = false;
 
   // 回答履歴。最終レポートの段階別・カテゴリ別得点と、間違えた問題の復習に
   // 使う。永続化はしない（今回の範囲外）。同じ問題を二度数えないよう、
   // 問題 ID を鍵にする。
   const answers = new Map();
+  const keyOf = (stage, quiz) => (quiz && quiz.id) || `${stage.id}:${quiz && quiz.q}`;
   const record = (stage, quiz, isCorrect) => {
-    const key = quiz.id || `${stage.id}:${quiz.q}`;
+    const key = keyOf(stage, quiz);
     if (answers.has(key)) return false;
     answers.set(key, {
       questionId: key,
       stageId: stage.id || '',
       stageName: stage.name || '',
-      category: quiz.category || 'log-reading',
+      category: (quiz && quiz.category) || 'log-reading',
       correct: !!isCorrect,
-      evidenceIds: quiz.evidenceIds || [],
+      evidenceIds: (quiz && quiz.evidenceIds) || [],
       quiz,
     });
     return true;
@@ -94,12 +107,95 @@ export async function renderLesson(mount, lessonId) {
   const player = el('div', 'player');
   mount.appendChild(player);
 
+  /**
+   * 演習全体の設問進捗。`pos` は今の問題の通し番号（0 始まり）で、設問の
+   * ない段階では null。
+   *
+   * 文字（「問題 4 / 8」「回答済み 3 / 8」）が現在位置と件数を伝え、問題ごとの
+   * マークは見た目の補助として読み上げから外す。マークは ○・× の記号でも
+   * 正誤を示し、色だけに頼らない。進捗の表示専用で、押して移動はできない。
+   */
+  const progressView = (pos) => {
+    const box = el('div', 'qprogress');
+    // 回答で書き換わるが、正誤は設問側の role=status が読み上げる。#app は
+    // aria-live なので、ここは自動では読ませない（見出しへ移れば読める）。
+    box.setAttribute('aria-live', 'off');
+    const head = el('div', 'qprogress__head');
+    box.appendChild(head);
+    if (questionTotal === 0) {
+      head.appendChild(el('span', 'qprogress__title', '設問なし'));
+      return { box, title: null, update() {} };
+    }
+    let title = null;
+    if (pos !== null) {
+      title = el('h3', 'qprogress__title', `問題 ${pos + 1} / ${questionTotal}`);
+      // 同じ段階で次の問題へ進んだときのフォーカス先。
+      title.tabIndex = -1;
+      head.appendChild(title);
+    }
+    const count = el('span', 'qprogress__count');
+    head.appendChild(count);
+
+    const marks = el('ol', 'qprogress__marks');
+    marks.setAttribute('aria-hidden', 'true');
+    const items = sequence.map(() => marks.appendChild(el('li', 'qmark')));
+    box.appendChild(marks);
+
+    const paint = (justAnswered) => {
+      count.textContent =
+        `回答済み ${answers.size} / ${questionTotal}${reviewing ? '（初回の記録）' : ''}`;
+      sequence.forEach(({ stage, quiz }, i) => {
+        const a = answers.get(keyOf(stage, quiz));
+        const li = items[i];
+        li.className = 'qmark';
+        if (i === pos) li.classList.add('is-current');
+        if (a) li.classList.add(a.correct ? 'is-ok' : 'is-bad');
+        if (justAnswered && i === pos) li.classList.add('is-just');
+        li.textContent = a ? (a.correct ? '○' : '×') : '';
+      });
+    };
+    paint(false);
+    return { box, title, update: paint };
+  };
+
+  /** 結果へ。完了の演出は最初の 1 回だけ。復習から戻ったときは出さない。 */
+  const showResults = () => {
+    clearMotion();
+    const animate = !celebrated;
+    celebrated = true;
+    reviewing = false;
+    renderRecap(mount, lesson, {
+      correct,
+      total: questionTotal,
+      answers: [...answers.values()],
+      animate,
+      // 復習から段階へ戻れるようにする。得点は `answers` が鍵で
+      // 重複を弾くので、戻って解き直しても二重加算されない。
+      goToStage: (stageId) => {
+        const at = stages.findIndex((s) => s.id === stageId);
+        if (at < 0) return;
+        reviewing = true;
+        // レポートは mount を丸ごと差し替えるので、player はもう外れて
+        // いる。付け直してから段階を描かないと、どこにも表示されない。
+        mount.textContent = '';
+        mount.appendChild(player);
+        renderStage(at);
+        scrollToTop();
+      },
+    });
+    scrollToTop();
+  };
+
   const renderStage = (index) => {
     clearCited();
+    clearMotion();
     player.textContent = '';
     const stage = stages[index];
+    // 段階ごとに作り直す器。新しい段階の記録と見出しを、まとめて表示し直す。
+    const page = el('div', 'stage-view');
+    player.appendChild(page);
 
-    // --- Stage header: index pill, name, progress dots ---
+    // --- Stage header: index pill, name, stage bar ---
     const head = el('div', 'stage-head');
     head.appendChild(el('span', 'stage-index', `段階 ${index + 1}/${total}`));
     const stageName = el('h2', 'stage-name', stage.name || '');
@@ -107,18 +203,21 @@ export async function renderLesson(mount, lessonId) {
     // stage to screen readers after the previous screen is torn down.
     stageName.tabIndex = -1;
     head.appendChild(stageName);
+    if (reviewing) head.appendChild(el('span', 'badge review-badge', '復習中'));
 
+    // 段階の進み具合。問題ごとの丸いマーク（設問進捗）と見分けられるよう、
+    // 細い帯で示す。
     const progress = el('div', 'progress');
     progress.setAttribute('role', 'img');
     progress.setAttribute('aria-label', `全 ${total} 段階中 ${index + 1} 段階目`);
     for (let i = 0; i < total; i++) {
-      const dot = el('span', 'progress__dot');
-      if (i < index) dot.classList.add('is-done');
-      else if (i === index) dot.classList.add('is-current');
-      progress.appendChild(dot);
+      const seg = el('span', 'progress__seg');
+      if (i < index) seg.classList.add('is-done');
+      else if (i === index) seg.classList.add('is-current');
+      progress.appendChild(seg);
     }
     head.appendChild(progress);
-    player.appendChild(head);
+    page.appendChild(head);
 
     // --- Optional stage intro (friendly framing) ---
     if (stage.intro) {
@@ -128,7 +227,7 @@ export async function renderLesson(mount, lessonId) {
         .split(/\n{2,}/)
         .map((t) => t.trim())
         .filter(Boolean)
-        .forEach((t) => player.appendChild(el('p', 'muted', t)));
+        .forEach((t) => page.appendChild(el('p', 'muted', t)));
     }
 
     // --- Observed behavior panel ---
@@ -171,7 +270,7 @@ export async function renderLesson(mount, lessonId) {
       list.appendChild(row);
     });
     panel.appendChild(list);
-    player.appendChild(panel);
+    page.appendChild(panel);
 
     // --- 証拠カード ---
     //
@@ -206,14 +305,14 @@ export async function renderLesson(mount, lessonId) {
       const box = el('div', 'evidence-list');
       cited.forEach((i) => box.appendChild(evidenceCard(evidence[i])));
       evPanel.appendChild(box);
-      player.appendChild(evPanel);
+      page.appendChild(evPanel);
     }
 
     // --- Quiz (answer before advance) ---
     const quizPanel = el('div', 'panel quiz-panel');
-    player.appendChild(quizPanel);
+    page.appendChild(quizPanel);
 
-    // 回答した直後に、視点を設問の先頭（「設問 n/m」）へ合わせる。
+    // 回答した直後に、視点を設問の先頭（「問題 n / N」の進捗）へ合わせる。
     //
     // 回答後は解説・根拠・「次へ」が下に足される。以前は「次へ」ボタンへ
     // フォーカスを移していたので、ブラウザがそこまでスクロールし、自分の
@@ -236,37 +335,34 @@ export async function renderLesson(mount, lessonId) {
     back.addEventListener('click', () => { location.hash = '#/'; });
     nav.appendChild(back);
 
+    // 復習中は、残りの段階を通らずに結果へ戻れるようにする。
+    if (reviewing) {
+      const toResults = el('button', 'btn btn-ghost', '結果に戻る');
+      toResults.type = 'button';
+      toResults.addEventListener('click', showResults);
+      nav.appendChild(toResults);
+    }
+
     const isLast = index === total - 1;
-    const cont = el('button', 'btn btn-primary', isLast ? '振り返りへ' : '次へ');
+    const cont = el('button', 'btn btn-primary btn-next', isLast ? '結果を見る' : '次の段階へ');
     cont.type = 'button';
     cont.hidden = true;
-    cont.addEventListener('click', () => {
+    ignoreHeldKey(cont);
+    let left = false;
+    cont.addEventListener('click', (e) => {
+      // 連打しても 1 段階ずつしか進まない。同じボタンの再実行は `left` で、
+      // 描き直した次の段階の新しいボタンに届いた 2 回目は `detail` で弾く。
+      if (left || repeatedClick(e)) return;
+      left = true;
       if (isLast) {
-        renderRecap(mount, lesson, {
-          correct,
-          total: questionTotal,
-          answers: [...answers.values()],
-          // 復習から段階へ戻れるようにする。得点は `answers` が鍵で
-          // 重複を弾くので、戻って解き直しても二重加算されない。
-          goToStage: (stageId) => {
-            const at = stages.findIndex((s) => s.id === stageId);
-            if (at < 0) return;
-            // レポートは mount を丸ごと差し替えるので、player はもう外れて
-            // いる。付け直してから段階を描かないと、どこにも表示されない。
-            mount.textContent = '';
-            mount.appendChild(player);
-            renderStage(at);
-            window.scrollTo(0, 0);
-          },
-        });
-        window.scrollTo(0, 0);
+        showResults();
       } else {
         renderStage(index + 1);
-        window.scrollTo(0, 0);
+        scrollToTop();
       }
     });
     nav.appendChild(cont);
-    player.appendChild(nav);
+    page.appendChild(nav);
 
     // --- 設問 ---
     //
@@ -282,6 +378,8 @@ export async function renderLesson(mount, lessonId) {
         if (!quizzes.length) {
           // 根拠が足りず設問を作れなかった段階。観測できた事実は上に出して
           // あるので、黙って飛ばさず理由を書いて先へ進めるようにする。
+          // 全体の回答済み件数はここでも示す（この段階は分母に入らない）。
+          quizPanel.appendChild(progressView(null).box);
           quizPanel.appendChild(
             el('div', 'panel__label', 'この段階には設問がありません')
           );
@@ -295,37 +393,53 @@ export async function renderLesson(mount, lessonId) {
         // 位置は動かさない。フォーカス先へ飛ぶと、回答直後に最下部まで
         // 流されてしまう。見せる位置は呼び出し側が決める。
         cont.focus({ preventScroll: true });
-        return;
+        return null;
       }
-      // 前の設問の根拠の強調を外してから、次の設問を出す。
+      // 前の設問の根拠の強調と、中央の ○・× を消してから、次の設問を出す。
       clearCited();
+      clearMotion();
       quizPanel.textContent = '';
+      // 設問ごとに作り直す器。CSS で短くフェード表示する。
+      const step = el('div', 'quiz-step');
+      quizPanel.appendChild(step);
+      const progress = progressView(firstAt[index] + qi);
+      step.appendChild(progress.box);
       if (quizzes.length > 1) {
-        quizPanel.appendChild(
-          el('div', 'panel__label', `設問 ${qi + 1}/${quizzes.length}`)
+        step.appendChild(
+          el('div', 'panel__label', `この段階の設問 ${qi + 1} / ${quizzes.length}`)
         );
       }
       const holder = el('div');
-      quizPanel.appendChild(holder);
+      step.appendChild(holder);
 
       renderQuiz(
         holder,
         quizzes[qi],
         (isCorrect) => {
+          let first = false;
           if (!scored.has(qi)) {
             scored.add(qi);
-            if (record(stage, quizzes[qi], isCorrect) && isCorrect) correct++;
+            first = record(stage, quizzes[qi], isCorrect);
+            if (first && isCorrect) correct++;
           }
+          // 初回の回答だけが進捗を進める。復習での回答は記録を変えない。
+          progress.update(first);
           if (qi + 1 < quizzes.length) {
-            const nav2 = el('div', 'navbtns');
-            const nextQ = el('button', 'btn btn-primary', '次の設問へ');
+            const nav2 = el('div', 'navbtns navbtns--end');
+            const nextQ = el('button', 'btn btn-primary btn-next', '次の問題へ');
             nextQ.type = 'button';
-            nextQ.addEventListener('click', () => {
-              askFrom(qi + 1);
+            ignoreHeldKey(nextQ);
+            let used = false;
+            nextQ.addEventListener('click', (e) => {
+              // 連打しても 1 問ずつしか進まない。
+              if (used || repeatedClick(e)) return;
+              used = true;
+              const title = askFrom(qi + 1);
               keepQuizInView();
+              if (title) title.focus({ preventScroll: true });
             });
             nav2.appendChild(nextQ);
-            quizPanel.appendChild(nav2);
+            step.appendChild(nav2);
             nextQ.focus({ preventScroll: true });
           } else {
             askFrom(qi + 1);
@@ -334,6 +448,7 @@ export async function renderLesson(mount, lessonId) {
         },
         evidence
       );
+      return progress.title;
     };
     askFrom(0);
 
@@ -344,7 +459,7 @@ export async function renderLesson(mount, lessonId) {
   };
 
   if (total === 0) {
-    renderRecap(mount, lesson, { correct: 0, total: 0, answers: [] });
+    renderRecap(mount, lesson, { correct: 0, total: 0, answers: [], animate: true });
     return;
   }
 
@@ -358,7 +473,7 @@ export async function renderLesson(mount, lessonId) {
       mount.textContent = '';
       mount.appendChild(player);
       renderStage(0);
-      window.scrollTo(0, 0);
+      scrollToTop();
     });
     return;
   }

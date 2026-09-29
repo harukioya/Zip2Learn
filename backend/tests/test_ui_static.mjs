@@ -71,6 +71,8 @@ class El {
     this._text = '';
     this.children = cs.map((c) => this._adopt(c));
   }
+  // 回答直後の ○・× は、時間が来ると remove() で自分を外す。
+  remove() { if (this.parent) this.parent.children = this.parent.children.filter((x) => x !== this); this.parent = null; }
   setAttribute(k, v) { this.attrs[k] = v; }
   addEventListener(t, f) { (this._on[t] || (this._on[t] = [])).push(f); }
   click() { return Promise.all((this._on.click || []).map((f) => f())); }
@@ -266,7 +268,7 @@ await test('回答後の「根拠の記録を見る」は、段階内のカー�
   assert.equal(new Set(ids).size, ids.length);
 });
 
-await test('次の設問へ進むと、前の設問の根拠の強調が消え、強調は常に 1 枚だけ', async () => {
+await test('次の問題へ進むと、前の設問の根拠の強調が消え、強調は常に 1 枚だけ', async () => {
   const l = lessonCopy();
   const view = await openLesson(l);
   await view.buttons(/演習を始める/)[0].click();
@@ -282,7 +284,7 @@ await test('次の設問へ進むと、前の設問の根拠の強調が消え�
   assert.equal(highlighted().length, 1, 'jumping again moves the highlight, never adds a second');
   assert.equal(highlighted()[0].id, `ev-stage-${q1.evidenceIds[1]}`);
 
-  await view.buttons(/次の設問へ/)[0].click();
+  await view.buttons(/次の問題へ/)[0].click();
   assert.equal(highlighted().length, 0, 'the previous answer must not stay highlighted');
 
   await view.cls('option')[q2.correct].click();
@@ -290,8 +292,43 @@ await test('次の設問へ進むと、前の設問の根拠の強調が消え�
   assert.equal(highlighted().length, 1);
   assert.equal(highlighted()[0].id, `ev-stage-${q2.evidenceIds[0]}`);
 
-  await view.buttons(/^次へ$/)[0].click();
+  await view.buttons(/^次の段階へ$/)[0].click();
   assert.equal(highlighted().length, 0, 'a new stage starts without highlights');
+});
+
+await test('静的に確認できた事実は 1 件目だけを見せ、続きを読む・閉じるで開閉できる', async () => {
+  const l = lessonCopy();
+  const facts = l.report.facts;
+  assert.ok(facts.length > 1, '前提: 事実が 2 件以上ある');
+  const view = await openLesson(l);
+  await view.buttons(/演習を始める/)[0].click();
+  for (let s = 0; s < l.stages.length; s++) {
+    for (const q of l.stages[s].quizzes) {
+      await view.cls('option')[q.correct].click();
+      const next = view.buttons(/次の問題へ/);
+      if (next.length) await next[0].click();
+    }
+    await view.buttons(/^(次の段階へ|結果を見る)$/)[0].click();
+  }
+  const box = view.find((e) => e.tag === 'section' && e.children[0] &&
+    e.children[0].textContent === '静的に確認できた事実')[0];
+  assert.ok(box.textContent.includes('実行時に起きたことではありません'), '説明は常に見える');
+  const rest = box.cls('fold-rest')[0];
+  const [toggle, close] = box.cls('fold-toggle');
+  assert.equal(box.cls('timeline__row').length, facts.length, '全件が DOM にある');
+  assert.equal(rest.cls('timeline__row').length, facts.length - 1, '2 件目以降を畳む');
+  assert.ok(rest.hidden);
+  assert.equal(rest.find((e) => e.tag === 'ol')[0].attrs.start, '2', '番号は 2 から続く');
+  assert.equal(toggle.textContent, `続きを読む（残り ${facts.length - 1} 件）`);
+
+  await toggle.click();
+  assert.equal(rest.hidden, false);
+  assert.equal(toggle.textContent, '閉じる');
+  assert.equal(close.textContent, '閉じる', '最後の項目の下にも閉じる');
+  await close.click();
+  assert.ok(rest.hidden);
+  assert.equal(toggle.textContent, `続きを読む（残り ${facts.length - 1} 件）`);
+  assert.equal(globalThis.__focused, toggle, '畳んだら上のボタンへ戻る');
 });
 
 await test('得点の母数は設問数で、振り返りは静的な事実と限界を示す', async () => {
@@ -303,10 +340,10 @@ await test('得点の母数は設問数で、振り返りは静的な事実と�
     for (let qi = 0; qi < l.stages[s].quizzes.length; qi++) {
       const q = l.stages[s].quizzes[qi];
       await view.cls('option')[q.correct].click();
-      const next = view.buttons(/次の設問へ/);
+      const next = view.buttons(/次の問題へ/);
       if (next.length) await next[0].click();
     }
-    await view.buttons(/^(次へ|振り返りへ)$/)[0].click();
+    await view.buttons(/^(次の段階へ|結果を見る)$/)[0].click();
   }
   const text = view.textContent;
   assert.match(text, new RegExp(`正解 ${total} / ${total}`));
@@ -692,10 +729,10 @@ await test('振り返りに、新しいカテゴリの日本語名が出る', as
     for (let i = 0; i < l.stages[s].quizzes.length; i++) {
       const q = l.stages[s].quizzes[i];
       await view.cls('option')[q.correct].click();
-      const nextQ = view.buttons(/次の設問へ/);
+      const nextQ = view.buttons(/次の問題へ/);
       if (nextQ.length) await nextQ[0].click();
     }
-    await view.buttons(/^(次へ|振り返りへ)$/)[0].click();
+    await view.buttons(/^(次の段階へ|結果を見る)$/)[0].click();
   }
   const text = app.textContent;
   assert.match(text, new RegExp(`正解 ${quizzesOf(l).length} / ${quizzesOf(l).length}`));
