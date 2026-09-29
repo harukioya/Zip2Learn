@@ -36,8 +36,14 @@ from typing import Mapping
 import evidence
 import timeline
 
-#: 教材生成が段階を組み立てられる種別。これ以外の種別を出してもよいが、
-#: 段階には載らない（件数の集計にだけ使う）。
+#: 契約として意味を決めている既知の種別。これらは要約（summary）と動作
+#: （action）を空にできない（`validate_event`）。これ以外の種別を出しても
+#: よいが、件数の集計にだけ使う。
+#:
+#: 既知であることと、段階に載ることは別。現在の教材生成
+#: （`explain.lesson_from_parsed`）が段階を作るのは process・file・network
+#: だけで、registry の記録は導入文の件数に数えるが、段階・設問・時系列には
+#: 載らない。
 KNOWN_KINDS = ("process", "file", "registry", "network")
 
 #: 種別ごとに必ず持たせる属性。値は空文字でもよいが、キーは省略できない。
@@ -157,7 +163,7 @@ class NormalizedEvent:
 
     必須項目と、その検査（`validate_event`）:
 
-      kind            小文字の種別名。`KNOWN_KINDS` 以外も可（段階には載らない）。
+      kind            小文字の種別名。`KNOWN_KINDS` 以外も可（件数の集計にだけ使う）。
       action          その種別の中での動作（start / create / request など）。
       timestamp       `timeline.Stamp`。読めなければ `timeline.UNKNOWN`。
       host            表示用の端末名。読めなければ `?` などの代用。

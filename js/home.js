@@ -27,7 +27,7 @@ export async function renderHome(mount) {
 
   const intro = document.createElement('p');
   intro.textContent =
-    '実際の攻撃を段階ごとに追い、挙動を読んで設問に答え、解説を確認します。最後に MITRE ATT&CK と対応付けて振り返ります。';
+    '実際の攻撃を段階ごとに追い、挙動を読んで設問に答え、解説を確認します。最後に MITRE ATT&CK® と対応付けて振り返ります。';
 
   // Entry point to the inspector. Kept next to the lessons because the two
   // halves answer the same question from different ends: the lessons explain

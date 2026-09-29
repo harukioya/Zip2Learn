@@ -65,6 +65,16 @@ GHIDRA_JOB_DIR = os.path.join(STATE_DIR, "ghidra-jobs")
 STATIC_DIRS = ("js", "styles", "data")
 STATIC_EXT = {".js": "text/javascript", ".css": "text/css", ".json": "application/json"}
 
+# 画面の「第三者ライセンス」で読ませる同梱ファイル。静的配信の許可を広げず、
+# 名前から固定のパスを引く対応表にする（要求のパスはファイルシステムに届かない）。
+# オフラインでも、同梱したライセンス本文をアプリの中で読めるようにするため。
+LICENSE_FILES = {
+    "notices": "THIRD_PARTY_NOTICES.md",
+    "mitre-attack": "third_party/mitre-attack/LICENSE.txt",
+    "apache-license": "ghidra/sample/LICENSE-Apache-2.0.txt",
+    "ghidra-notice": "ghidra/sample/NOTICE-Ghidra.txt",
+}
+
 PREVIEW_BYTES = 2048
 MAX_BODY = 64 * 1024
 
@@ -136,6 +146,7 @@ ROUTES = [
     Route("GET", r"/api/archives/(\d{1,9})/members", Capability.READ, "h_members"),
     Route("GET", r"/api/archives/(\d{1,9})/members/(\d{1,9})/preview",
           Capability.READ, "h_preview"),
+    Route("GET", r"/api/licenses/([a-z0-9-]{1,32})", Capability.READ, "h_license"),
     Route("GET", r"/api/lessons", Capability.READ, "h_lessons"),
     Route("GET", r"/api/lessons/([A-Za-z0-9_-]{1,64})", Capability.READ, "h_lesson"),
     Route("GET", r"/api/lessons/([A-Za-z0-9_-]{1,64})/evidence/(ev-[0-9a-f]{8,64})",
@@ -1050,6 +1061,18 @@ class Handler(ghidra_api.GhidraHandlers, BaseHTTPRequestHandler):
 
     def h_lessons(self):
         return self._json({"lessons": STATE.store.lessons()})
+
+    def h_license(self, name: str):
+        """同梱したライセンス・第三者表記の本文を、そのままの文字列で返す。"""
+        rel = LICENSE_FILES.get(name)
+        if rel is None:
+            return self._error(404, "該当するライセンス情報がありません")
+        try:
+            with open(os.path.join(REPO_ROOT, rel), "rb") as fh:
+                body = fh.read()
+        except OSError:
+            return self._error(404, "該当するライセンス情報がありません")
+        self._send(200, body, "text/plain; charset=utf-8")
 
     def h_lesson(self, lesson_id: str):
         lesson = STATE.store.lesson(lesson_id)

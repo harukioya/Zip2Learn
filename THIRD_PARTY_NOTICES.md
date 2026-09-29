@@ -1,6 +1,10 @@
 # 第三者ソフトウェアと同梱物の一覧
 
-確認日: 2026-09-27。版を上げたとき・配布するときは、各リンク先で条件を確認し直してください。
+確認日: 2026-09-27（MITRE ATT&CK® と Docker の節は 2026-09-29）。版を上げたとき・配布するときは、
+各リンク先で条件を確認し直してください。
+
+アプリの中では、画面下部の「第三者ソフトウェアとライセンス」（`#/licenses`）から、この一覧と
+同梱したライセンス本文を読めます。本文はリポジトリの同梱ファイルを表示するので、オフラインでも読めます。
 
 このリポジトリは、アプリ本体（Python 標準ライブラリだけで動くコードと画面）に加えて、
 Ghidra 静的解析教材のためのファイルを含みます。**処理イメージそのもの（Ghidra・JDK・
@@ -83,12 +87,36 @@ Ghidra プロジェクトとは関係がなく、承認や推奨を受けたも�
 
 ### Docker
 
-アプリは Docker を同梱・自動導入しません。利用条件（無料の範囲と有料の条件）は
-README の「Docker の費用について」を参照してください。
+| 項目 | 内容 |
+|---|---|
+| 用途 | Ghidra 静的解析教材の処理イメージを、利用者の PC で取得・構築・実行するためだけに使う（ログ教材には不要） |
+| 同梱・導入 | **同梱しない。自動インストールもしない。** 利用者が自分で導入する |
+| 利用条件 | <https://docs.docker.com/subscription-billing/desktop-license/>（確認日: 2026-09-29） |
+
+- Docker Engine（Moby などのオープンソースのプロジェクト）と Docker Desktop では、ライセンス・利用条件の
+  扱いが異なります。Docker Desktop は Docker Subscription Service Agreement の対象です。
+- Docker Desktop には、個人利用・教育・非商用のオープンソースプロジェクト・一定規模未満の小規模事業者など、
+  無料で使える条件があります。一方で、規模の大きい組織での業務利用や政府機関での利用などでは、有料の
+  契約が必要です。
+- 大学・研究室での利用も、組織の規模や用途によって扱いが変わりえます。「無料で使える」と一律には
+  言えません。条件は変わることがあるため、導入・利用の前に上の公式ページで最新の条件を確認してください。
 
 ## 画面・教材に表示するもの
 
 ### MITRE ATT&CK®
 
-ログ教材で手法 ID と名前を使っています（静的解析の教材では使いません）。
-表示の条件は README の「第三者の著作物とライセンス」を参照してください。
+| 項目 | 内容 |
+|---|---|
+| 使用範囲 | **ログ教材の手法 ID・名称**。`backend/attck.py` の対応規則に書いた ID と名前を、記録の説明と最終レポートの「MITRE ATT&CK® との対応」に表示する。Ghidra の静的解析教材では使わない。ATT&CK のデータセット（STIX など）は同梱しない |
+| 出典 | <https://attack.mitre.org/> |
+| 利用条件 | <https://attack.mitre.org/resources/legal-and-branding/terms-of-use/>（<https://attack.mitre.org/resources/terms-of-use/> から転送される）。名称の表記: <https://attack.mitre.org/resources/faq/#legal> |
+| 同梱したライセンス | [third_party/mitre-attack/LICENSE.txt](third_party/mitre-attack/LICENSE.txt)（著作権表示・ライセンス・免責を含む公式原文。**無改変**。著作権年も原文のまま） |
+| ライセンスの取得元 | <https://raw.githubusercontent.com/mitre-attack/attack-stix-data/master/LICENSE.txt>。取得時の `master` は `6cda5ad8462c79e14fbb872f4e09059b18e0cfc4`（このコミットの LICENSE.txt と同一であることを確認）。LICENSE.txt を最後に変更したコミットは `3aba8a0e56096f2d7e966f4492f592106a7aa8e5`（2026-04-28、著作権年の更新） |
+| ライセンスを取得・確認した日 | 2026-09-29。SHA-256 `738144f7fb054722a4ef9d3367c51710341dc12fc574c6ac3a41daaaecd8bf5e`。同日、利用条件のページの本文と同じ内容であることも確認した |
+| 手法情報の採用版 | **不明（記録なし）**。手法 ID・名称は `backend/attck.py` に直接書かれており、どの ATT&CK のリリースから、いつ取ったかはリポジトリに記録されていない。上の「ライセンスを取得・確認した日」は、手法情報を取得した日ではない。名前には公式名を短くしたものがある（例: T1547.001 を「Boot or Logon Autostart: Registry Run Keys」と表示）。教材に残す `ruleVersion`（例: `2026-09-zip2learn-3`）は本アプリの対応規則の版で、ATT&CK の版ではない |
+
+- 記録と手法の対応付け、およびそれを使った教材の生成は Zip2Learn 独自のものです。The MITRE Corporation
+  （MITRE）の承認・推奨・支援を受けたものではありません。
+- MITRE ATT&CK と ATT&CK は The MITRE Corporation の登録商標です。MITRE の表記指針に従い、利用者が最初に
+  目にする説明（ホームの紹介文、導入画面の用語説明、最終レポートの見出し、アプリ内のライセンス画面）で
+  「MITRE ATT&CK®」と表記しています。以降の出現箇所には ® を付けていません。

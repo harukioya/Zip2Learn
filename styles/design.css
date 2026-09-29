@@ -352,6 +352,8 @@ a{color:var(--brand-ink)}
 .badge{display:inline-flex; align-items:center; gap:6px; font:700 11px/1 "JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace; padding:5px 10px; border-radius:var(--r-pill); background:var(--surface-2); color:var(--muted); border:1px solid var(--line-2)}
 .safety-note{border-top:1px solid var(--line); margin-top:20px; padding:22px 0 40px; color:var(--faint); font-size:.85rem}
 .safety-note strong{color:var(--muted)}
+.safety-note .wrap{display:flex; flex-wrap:wrap; gap:6px 18px; align-items:baseline}
+.safety-note__link{color:var(--muted)}
 
 /* focus + motion */
 :focus-visible{outline:3px solid var(--brand); outline-offset:2px; border-radius:8px}
@@ -566,3 +568,15 @@ a{color:var(--brand-ink)}
 .review__q{font-weight:700; word-break:break-word}
 .unknown__topic{font-weight:700; margin-top:10px}
 .unknown__detail{margin:2px 0 0; color:var(--muted); font-size:.93rem}
+
+/* ---- 第三者ソフトウェアとライセンス ---- */
+.licenses{padding:20px 0 90px}
+.license-title{font-size:1.25rem; margin-bottom:10px}
+/* 同梱したライセンス本文。原文の改行を保ち、長い行は折り返す。 */
+.license-text{
+  margin:10px 0 0; padding:12px 14px; background:var(--surface-2);
+  border:1px solid var(--line); border-radius:var(--r-sm);
+  font-size:12px; line-height:1.65; white-space:pre-wrap; overflow-wrap:anywhere;
+  max-height:420px; overflow:auto;
+}
+.license-text:focus-visible{outline:2px solid var(--brand); outline-offset:2px}
