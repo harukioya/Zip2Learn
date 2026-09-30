@@ -57,7 +57,7 @@ ITM2_LINES = "\n".join(
 )
 PROXY_LINES = (
     '192.0.2.10 - - [05/Oct/2022:14:00:07 +0900] '
-    '"CONNECT 198.51.100.23:443 HTTP/1.1" 200 1588\n'
+    '"CONNECT 198.51.100.23:443 HTTP/1.1" 200 1024\n'
 )
 BASELINE_LINES = ITM2_LINES.replace("WS99", "WS01").replace("cmd.exe", "notepad.exe")
 TOOL_SAMPLE = ITM2_LINES.replace("WS99", "SAMPLE-HOST")

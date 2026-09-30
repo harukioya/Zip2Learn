@@ -106,10 +106,10 @@ def build(sources=None) -> dict:
 class TestStampParsing(unittest.TestCase):
     def test_itm2_timestamp_is_kept_verbatim(self):
         """No timezone rewriting: the screen must match the log."""
-        stamp = itm2_fmt.parse_timestamp("10/05/2022 14:00:27.738 +0900 rest")
+        stamp = itm2_fmt.parse_timestamp("01/15/2026 09:00:00.250 +0900 rest")
         self.assertTrue(stamp.known)
-        self.assertEqual(stamp.display, "10/05/2022 14:00:27.738 +0900")
-        self.assertIn("14:00:27", stamp.display)
+        self.assertEqual(stamp.display, "01/15/2026 09:00:00.250 +0900")
+        self.assertIn("09:00:00", stamp.display)
 
     def test_proxy_timestamp_is_kept_verbatim(self):
         stamp = proxy_fmt.parse_timestamp("05/Oct/2022:14:00:07 +0900")

@@ -714,7 +714,7 @@ class TestProxyIsNotAWebServerLog(unittest.TestCase):
     def test_proxy_forms_are_claimed(self):
         self.assertEqual(proxy.PARSER.detect(self.src(PROXY_TEXT)), 1.0)
         connect = ('192.0.2.10 - - [05/Oct/2022:14:00:07 +0900] '
-                   '"CONNECT 198.51.100.23:443 HTTP/1.1" 200 1588')
+                   '"CONNECT 198.51.100.23:443 HTTP/1.1" 200 1024')
         self.assertEqual(proxy.PARSER.detect(self.src(connect)), 1.0)
         self.assertEqual(len(proxy.PARSER.parse(self.src(PROXY_TEXT + "\n" + connect))), 3)
 

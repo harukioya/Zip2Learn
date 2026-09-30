@@ -57,7 +57,7 @@ ITM2 = [
 ]
 PROXY = [
     '192.0.2.10 - - [05/Oct/2022:14:00:07 +0900] '
-    '"CONNECT 198.51.100.23:443 HTTP/1.1" 200 1588',
+    '"CONNECT 198.51.100.23:443 HTTP/1.1" 200 1024',
     '192.0.2.10 - - [05/Oct/2022:14:00:08 +0900] '
     '"GET http://203.0.113.9/a HTTP/1.1" 200 42',
 ]
@@ -711,9 +711,9 @@ class TestDisplayMatchesTheAnswer(unittest.TestCase):
     The display used `path or psPath` while the question used `psPath`. In
     InfoTrace Mark II, `psPath` is the process that started and `parentPath` is
     its parent, so on a record carrying both the list said "cmd.exe started"
-    while the question's answer was the parent, explorer.exe. Real data hid it:
-    all 676 start records there leave `path` empty, so the fallback happened to
-    agree.
+    while the question's answer was the parent, explorer.exe. The bug stayed
+    hidden while start records left `path` empty, because the fallback then
+    happened to agree.
     """
 
     def setUp(self):
