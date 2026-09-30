@@ -222,12 +222,6 @@ function renderStaticIntroduction(mount, lesson, onStart) {
   head.append(title);
   page.append(head);
 
-  if (intro.status === 'draft') {
-    page.append(
-      el('div', 'feedback is-bad',
-        '⚠ これは Ghidra の保存済み解析情報から自動生成した下書きです。内容を確認のうえ使ってください。')
-    );
-  }
   page.append(
     el('div', 'feedback is-ok',
       '対象のプログラムは実行していません。GZF に保存されていた解析結果（関数・命令・文字列・参照）を読み出しただけです。')
